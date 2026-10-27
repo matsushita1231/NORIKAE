@@ -1,0 +1,9 @@
+{
+  "name": "でんしゃマップ 京急・鶴見線",
+  "short_name": "でんしゃマップ",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fff6ec",
+  "theme_color": "#fff6ec",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

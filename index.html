@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#fff6ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="でんしゃマップ">
+<title>でんしゃマップ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="brand-icon">🚃</span><span>でんしゃマップ</span></div>
+  <div class="clock" id="clock">--:--</div>
+  <button class="icon-btn" id="open-settings" aria-label="設定">⚙︎</button>
+</header>
+
+<main class="map-wrap">
+  <svg id="map" viewBox="0 0 420 620" preserveAspectRatio="xMidYMid meet" role="img" aria-label="京急線と鶴見線の路線図">
+    <defs>
+      <pattern id="waves" width="28" height="14" patternUnits="userSpaceOnUse">
+        <path d="M0 7 q7 -6 14 0 t14 0" fill="none" stroke="var(--wave)" stroke-width="2" stroke-linecap="round"/>
+      </pattern>
+      <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#5a3a20" flood-opacity=".18"/>
+      </filter>
+    </defs>
+    <g id="layer-bg"></g>
+    <g id="layer-lines"></g>
+    <g id="layer-walks"></g>
+    <g id="layer-stations"></g>
+    <g id="layer-trains"></g>
+    <g id="layer-labels"></g>
+  </svg>
+  <div class="mode-pill" id="mode-pill">デモダイヤ</div>
+</main>
+
+<section class="sheet" id="sheet">
+  <button class="grabber" id="grabber" aria-label="パネルを開閉"></button>
+  <div class="time-row">
+    <button class="live-btn" id="live-btn">● LIVE</button>
+    <div class="time-label"><span id="time-label">いま</span><small id="time-sub"></small></div>
+  </div>
+  <input type="range" id="slider" min="0" max="120" step="1" value="0" aria-label="未来の時刻">
+  <div class="ticks"><span>いま</span><span>+30分</span><span>+60分</span><span>+90分</span><span>+120分</span></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-plan="home">🏠 かえる</button>
+    <button class="tab" data-plan="work">🏭 いく</button>
+  </div>
+  <div class="vias">
+    <button class="via-btn active" data-via="auto">✨ はやい順</button>
+    <button class="via-btn" data-via="tsurumi">鶴見経由</button>
+    <button class="via-btn" data-via="kokudo">国道経由</button>
+  </div>
+  <div id="plan-mini" class="plan-mini"></div>
+  <div id="plan"></div>
+  <div id="train-detail"></div>
+
+  <p class="credit">データ：公共交通オープンデータセンター（正確性・完全性は保証されません）<button class="link-btn" id="open-about">このアプリについて</button></p>
+</section>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h2>せってい</h2>
+    <label>チャレンジ2026 用トークン
+      <input type="password" id="set-ctoken" autocomplete="off" placeholder="api-challenge.odpt.org 用">
+    </label>
+    <label>鶴見 ⇄ 京急鶴見 の徒歩（分）
+      <input type="number" id="set-walk-tsurumi" min="1" max="20">
+    </label>
+    <label>花月総持寺 ⇄ 国道 の徒歩（分）
+      <input type="number" id="set-walk-kokudo" min="1" max="20">
+    </label>
+    <p class="hint">トークンはこの端末の中だけに保存されます。</p>
+    <div class="dialog-actions"><button value="cancel" class="sec">とじる</button><button value="save" id="save-settings">保存</button></div>
+  </form>
+</dialog>
+
+<dialog id="about">
+  <form method="dialog">
+    <h2>このアプリについて</h2>
+    <p>本アプリケーションが利用する公共交通データは、公共交通オープンデータセンターにおいて提供されるものです。</p>
+    <p>公共交通事業者により提供されたデータを元にしていますが、必ずしも正確・完全なものとは限りません。</p>
+    <p>本アプリケーションの表示内容について、公共交通事業者への直接の問合せは行わないでください。</p>
+    <p>本アプリケーションに関するお問い合わせ：<a id="contact" href="https://github.com/matsushita1231/NORIKAE/issues" target="_blank" rel="noopener">GitHub の Issues</a></p>
+    <p class="hint">ソースコードは MIT License で公開しています。データの利用条件は公共交通オープンデータチャレンジ限定ライセンスに従います。</p>
+    <p class="hint">鶴見線はリアルタイム位置の提供がないため、時刻表から推定した位置を表示しています。未来の時刻は、現在の遅れをもとにした推定です。</p>
+    <div class="dialog-actions"><button value="ok">OK</button></div>
+  </form>
+</dialog>
+
+<script src="js/network.js"></script>
+<script src="js/timetable.js"></script>
+<script src="js/odpt.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
