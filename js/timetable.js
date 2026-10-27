@@ -90,14 +90,13 @@ window.Timetable = (() => {
     for (let i = 0; i < s.length; i++) {
       const a = N.byId[s[i].id];
       if (t <= at(s[i], 'dep', trip) && (i === 0 || t >= at(s[i], 'arr', trip))) {
-        const next = N.byId[(s[i + 1] || s[i - 1]).id];
-        const angle = Math.atan2(next.y - a.y, next.x - a.x) * (s[i + 1] ? 1 : 1) + (s[i + 1] ? 0 : Math.PI);
+        const angle = s[i + 1] ? N.pointAt(s[i].id, s[i + 1].id, 0).angle : N.pointAt(s[i - 1].id, s[i].id, 1).angle;
         return { x: a.x, y: a.y, angle, atStation: s[i].id, from: s[i].id, to: s[i + 1]?.id || null };
       }
       if (i < s.length - 1 && t > at(s[i], 'dep', trip) && t < at(s[i + 1], 'arr', trip)) {
-        const b = N.byId[s[i + 1].id];
         const f = ease((t - at(s[i], 'dep', trip)) / (at(s[i + 1], 'arr', trip) - at(s[i], 'dep', trip)));
-        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, angle: Math.atan2(b.y - a.y, b.x - a.x), atStation: null, from: s[i].id, to: s[i + 1].id };
+        const q = N.pointAt(s[i].id, s[i + 1].id, f);
+        return { x: q.x, y: q.y, angle: q.angle, atStation: null, from: s[i].id, to: s[i + 1].id };
       }
     }
     return null;

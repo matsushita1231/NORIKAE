@@ -69,7 +69,7 @@
     const lines = $('#layer-lines');
     lines.innerHTML = '';
     for (const seg of N.segments) {
-      const pts = seg.path.map(id => `${N.byId[id].x},${N.byId[id].y}`).join(' ');
+      const pts = seg.path.flatMap((id, i) => i === 0 ? [N.byId[id]] : N.geom(seg.path[i - 1], id).slice(1)).map(p => `${p.x},${p.y}`).join(' ');
       if (seg.bus) {
         el('polyline', { points: pts, fill: 'none', stroke: color(seg.line), 'stroke-opacity': .85, 'stroke-width': 8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, lines);
         el('polyline', { points: pts, fill: 'none', stroke: '#fff', 'stroke-width': 1.6, 'stroke-dasharray': '5 5', 'stroke-linecap': 'round' }, lines);
@@ -90,7 +90,7 @@
       const a = N.byId[w.from], b = N.byId[w.to];
       el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: 'var(--sub)', 'stroke-width': 3, 'stroke-dasharray': '1 6', 'stroke-linecap': 'round' }, walks);
       const min = w.id === 'walk-tsurumi' ? settings.walkTsurumi : settings.walkKokudo;
-      el('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 7, 'text-anchor': 'middle', class: 'walk-label' }, walks).textContent = `🚶${min}分`;
+      el('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + (w.id === 'walk-kokudo' ? 14 : -7), 'text-anchor': 'middle', class: 'walk-label' }, walks).textContent = `🚶${min}分`;
     }
 
     const st = $('#layer-stations');
