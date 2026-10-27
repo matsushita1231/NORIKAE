@@ -17,11 +17,13 @@
     meetTime: store.get('meetTime', '19:00'),
     shopWalk: Number(store.get('shopWalk', 3)),
     friendName: store.get('friendName', ''),
+    stationWalk: (() => { try { return JSON.parse(store.get('stationWalk', '{}')) || {}; } catch (e) { return {}; } })(),
   };
 
   const state = {
     offset: 0,          // スライダーの分
-    plan: 'home',
+    plan: store.get('plan', 'station'),
+    station: store.get('boardStation', 'kq-koyasu'),
     via: 'auto',        // auto | tsurumi | kokudo
     picked: null,       // 選択中の列車ID
     mode: 'demo',       // demo | timetable | live
@@ -103,6 +105,8 @@
         const lp = s.lp || 'l';
         const pos = { l: [-22, 4, 'end'], r: [18, 4, 'start'], b: [0, 24, 'middle'], t: [0, -16, 'middle'] }[lp];
         el('text', { x: s.x + pos[0], y: s.y + pos[1], 'text-anchor': pos[2], class: `st-label${s.major ? '' : ' minor'}` }, lab).textContent = s.name;
+        const hit = el('circle', { cx: s.x, cy: s.y, r: 15, fill: 'transparent', class: 'st-hit' }, st);
+        hit.addEventListener('click', (e) => { e.stopPropagation(); if (!MapZoom.wasDrag()) openBoard(s.id); });
       }
     }
   }
@@ -270,6 +274,70 @@
     return { cls: `wait ${cls}`, text: m <= 0 ? 'すぐ乗れる！' : `待ち ${m}分` };
   }
 
+  // ---- えき：好きな駅の次の電車 ----
+  const DIRS = {
+    keikyu: [['up', '上り 川崎・品川方面'], ['down', '下り 横浜方面']],
+    tsurumi: [['up', '鶴見方面'], ['down', '扇町・海芝浦方面']],
+    rinko: [['up', '鶴見駅東口方面']],
+  };
+  function openBoard(id) {
+    state.station = id;
+    store.set('boardStation', id);
+    selectTab('station');
+    $('#sheet').classList.remove('collapsed');
+  }
+  const stationWalk = (id) => Number(settings.stationWalk[id] ?? 0);
+  // 家・職場などからその駅まで歩く分に対して、間に合うかどうか
+  function catchChip(left, walk) {
+    if (!walk) return '';
+    const spare = Math.round(left - walk);
+    if (spare >= 0) return `<span class="chip wait ${spare <= 1 ? 'tight' : ''}">${spare === 0 ? '今出ればギリギリ' : `あと${spare}分以内に出ればOK`}</span>`;
+    if (left >= runMin(walk)) return `<span class="chip run">🏃 走れば間に合う</span>`;
+    return `<span class="chip miss">間に合わない</span>`;
+  }
+  function renderStation() {
+    const id = state.station;
+    const st = N.byId[id];
+    const t0 = viewMin();
+    const walk = stationWalk(id);
+    const groups = DIRS[st.line].map(([dir, label]) => ({
+      label, rows: T.departures(id, t0, (trip) => trip.dir === dir, 4),
+    }));
+    const key = 'st' + id + walk + Math.floor(t0 * 2) + groups.map(g => g.rows.map(r => r.trip.id + r.trip.delay).join()).join('|');
+    state.highlight = new Set(groups.map(g => g.rows[0]?.trip.id).filter(Boolean));
+    if (key === lastPlanKey) return;
+    lastPlanKey = key;
+    const options = Object.values(N.lines).map(line => `<optgroup label="${line.name}">${line.stations.map(x => `<option value="${x.id}" ${x.id === id ? 'selected' : ''}>${x.name}</option>`).join('')}</optgroup>`).join('');
+    const rowHtml = (r) => {
+      const left = r.dep - t0;
+      const p = T.position(r.trip, t0);
+      const first = r.trip.stops[0];
+      const where = !p ? (first.id === id ? '当駅始発' : `${N.byId[first.id].name} ${fmt(first.dep + (r.trip.delay || 0))}発`) : p.atStation === id ? 'まもなく発車' : p.atStation ? `いま${N.byId[p.atStation].name}` : `いま${N.byId[p.from].name}→${N.byId[p.to].name}`;
+      const d = Math.round(r.trip.delay || 0);
+      const plat = id === 'jt-asano' && r.trip.dir === 'up' ? `<span class="chip platform">${asanoPlatform(r.trip).replace(/（.*/, '')}</span>` : '';
+      return `<div class="board-row" data-trip="${r.trip.id}">
+        <div class="left"><b>${left < 1 ? 'まもなく' : `${Math.floor(left)}分`}</b><small>${fmt(r.dep)}${d >= 1 ? `（+${d}）` : ''}</small></div>
+        <div class="body"><div><span class="type t-${r.trip.line}">${r.trip.type}</span> ${r.trip.dest}行${plat}</div>
+          <div class="note">${where}${catchChip(left, walk)}</div></div>
+      </div>`;
+    };
+    $('#plan').innerHTML = `
+      <div class="meet-form">
+        <label>駅 <select id="board-station">${options}</select></label>
+        <label>ここまで徒歩 <input type="number" id="board-walk" min="0" max="60" value="${walk}">分</label>
+      </div>
+      ${groups.map(g => `<div class="board"><div class="board-head">${g.label}</div>${g.rows.length ? g.rows.map(rowHtml).join('') : '<div class="empty">この先の電車はありません 💤</div>'}</div>`).join('')}
+      <p class="hint">地図の駅をタップしても切り替えられます。徒歩の分数を入れると、出発までの余裕を表示します。</p>`;
+    $('#plan-mini').innerHTML = `🚉 ${st.name}：` + groups.map(g => g.rows[0] ? `${g.label.split(' ')[0]} ${Math.max(0, Math.floor(g.rows[0].dep - t0))}分後` : '').filter(Boolean).join('・');
+    $('#board-station').addEventListener('change', (e) => openBoard(e.target.value));
+    $('#board-walk').addEventListener('change', (e) => {
+      settings.stationWalk[id] = Math.max(0, Number(e.target.value) || 0);
+      store.set('stationWalk', JSON.stringify(settings.stationWalk));
+      lastPlanKey = '';
+    });
+    $('#plan').querySelectorAll('.board-row').forEach(div => div.addEventListener('click', () => pick(div.dataset.trip)));
+  }
+
   // ---- 待ち合わせ（鶴見駅近くのお店に集合）----
   // 集合時刻に間に合う、いちばん遅い便を探す
   function latestBefore(stationId, arriveId, deadline, filter) {
@@ -342,6 +410,7 @@
   let lastPlanKey = '';
   function renderPlan() {
     if (state.plan === 'meet') return renderMeet();
+    if (state.plan === 'station') return renderStation();
     const t0 = viewMin();
     const routes = plans(t0);
     const key = state.plan + state.via + routes.map(r => r.trips.join() + r.start + r.end).join('|') + routes.map(r => r.legs.map(l => l.delay || 0).join()).join();
@@ -493,11 +562,14 @@
   // ---- UI ----
   $('#slider').addEventListener('input', (e) => { state.offset = Number(e.target.value); if (state.picked) renderDetail(); });
   $('#live-btn').addEventListener('click', () => { state.offset = 0; $('#slider').value = 0; });
-  document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
-    state.plan = b.dataset.plan; lastPlanKey = '';
-    $('.vias').hidden = state.plan === 'meet';
-  }));
+  function selectTab(plan) {
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.dataset.plan === plan));
+    state.plan = plan; lastPlanKey = '';
+    store.set('plan', plan);
+    $('.vias').hidden = plan === 'meet' || plan === 'station';
+  }
+  document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => selectTab(b.dataset.plan)));
+  selectTab(state.plan);
   document.querySelectorAll('.via-btn').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.via-btn').forEach(x => x.classList.toggle('active', x === b));
     state.via = b.dataset.via; lastPlanKey = '';
