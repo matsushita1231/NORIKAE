@@ -28,7 +28,7 @@ window.NETWORK = (() => {
     color: '#f6c200',
     stations: [
       { id: 'jt-tsurumi', name: '鶴見', odpt: 'Tsurumi', x: 150, y: 240, lp: 'r', major: true },
-      { id: 'jt-kokudo', name: '国道', odpt: 'Kokudo', x: 165, y: 300, lp: 'r', major: true },
+      { id: 'jt-kokudo', name: '国道', odpt: 'Kokudo', x: 165, y: 300, lp: 'b', major: true },
       { id: 'jt-tsurumiono', name: '鶴見小野', odpt: 'Tsurumiono', x: 200, y: 345, lp: 'r' },
       { id: 'jt-bentembashi', name: '弁天橋', odpt: 'Bentembashi', x: 235, y: 385, lp: 'r' },
       { id: 'jt-asano', name: '浅野', odpt: 'Asano', x: 270, y: 425, lp: 'l', major: true, work: true },
@@ -43,12 +43,27 @@ window.NETWORK = (() => {
     ],
   };
 
+  // 臨港バス 鶴08（友だちが使う区間だけ）
+  const rinko = {
+    id: 'rinko',
+    name: '臨港バス 鶴08',
+    color: '#2aa876',
+    bus: true,
+    stations: [
+      { id: 'rk-turbine', name: '東芝西タービン前', x: 232, y: 505, lp: 'l', major: true, friend: true },
+      { id: 'rk-shioiri', name: '汐入二丁目', x: 195, y: 445, lp: 'l' },
+      { id: 'rk-shiozuru', name: '汐鶴橋通', x: 192, y: 375, lp: 'l' },
+      { id: 'rk-tsurumi', name: '鶴見駅東口', x: 182, y: 262, lp: 'r', major: true },
+    ],
+  };
+
   // 線の描画区間（駅IDの並び）
   const segments = [
     { line: 'keikyu', path: keikyu.stations.map(s => s.id) },
     { line: 'tsurumi', path: ['jt-tsurumi', 'jt-kokudo', 'jt-tsurumiono', 'jt-bentembashi', 'jt-asano', 'jt-anzen', 'jt-musashishiraishi', 'jt-hamakawasaki', 'jt-showa', 'jt-ogimachi'] },
     { line: 'tsurumi', path: ['jt-asano', 'jt-shinshibaura', 'jt-umishibaura'] },
     { line: 'tsurumi', path: ['jt-anzen', 'jt-okawa'] },
+    { line: 'rinko', path: ['rk-turbine', 'rk-shioiri', 'rk-shiozuru', 'rk-tsurumi'], bus: true },
   ];
 
   // 徒歩乗り換え（分は設定で上書き可）
@@ -59,10 +74,10 @@ window.NETWORK = (() => {
 
   // 縦方向を少し詰めて、スマホでも全体が見えるようにする
   const squeeze = (y) => Math.round(40 + (y - 70) * 0.8);
-  for (const line of [keikyu, tsurumi]) for (const s of line.stations) s.y = squeeze(s.y);
+  for (const line of [keikyu, tsurumi, rinko]) for (const s of line.stations) s.y = squeeze(s.y);
 
   const byId = {};
-  for (const line of [keikyu, tsurumi]) for (const s of line.stations) byId[s.id] = { ...s, line: line.id };
+  for (const line of [keikyu, tsurumi, rinko]) for (const s of line.stations) byId[s.id] = { ...s, line: line.id };
 
-  return { lines: { keikyu, tsurumi }, segments, walks, byId, squeeze };
+  return { lines: { keikyu, tsurumi, rinko }, segments, walks, byId, squeeze };
 })();

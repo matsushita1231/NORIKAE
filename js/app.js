@@ -14,6 +14,9 @@
     ctoken: store.get('odptChallengeToken', ''),
     walkTsurumi: Number(store.get('walkTsurumi', 4)),
     walkKokudo: Number(store.get('walkKokudo', 5)),
+    meetTime: store.get('meetTime', '19:00'),
+    shopWalk: Number(store.get('shopWalk', 3)),
+    friendName: store.get('friendName', ''),
   };
 
   const state = {
@@ -65,6 +68,11 @@
     lines.innerHTML = '';
     for (const seg of N.segments) {
       const pts = seg.path.map(id => `${N.byId[id].x},${N.byId[id].y}`).join(' ');
+      if (seg.bus) {
+        el('polyline', { points: pts, fill: 'none', stroke: color(seg.line), 'stroke-opacity': .85, 'stroke-width': 8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, lines);
+        el('polyline', { points: pts, fill: 'none', stroke: '#fff', 'stroke-width': 1.6, 'stroke-dasharray': '5 5', 'stroke-linecap': 'round' }, lines);
+        continue;
+      }
       el('polyline', { points: pts, fill: 'none', stroke: color(seg.line), 'stroke-width': 11, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, lines);
       el('polyline', { points: pts, fill: 'none', stroke: '#fff', 'stroke-opacity': .35, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', transform: 'translate(-2,-2)' }, lines);
     }
@@ -89,11 +97,12 @@
     for (const line of Object.values(N.lines)) {
       for (const s of line.stations) {
         const r = s.major ? 7.5 : 5.5;
-        el('circle', { cx: s.x, cy: s.y, r, fill: '#fff', stroke: line.color, 'stroke-width': s.major ? 4 : 3, filter: s.major ? 'url(#soft)' : '' }, st);
-        if (s.home || s.work) el('circle', { cx: s.x, cy: s.y, r: 13, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-dasharray': '3 3' }, st);
+        if (line.bus) el('rect', { x: s.x - r + 1, y: s.y - r + 1, width: 2 * r - 2, height: 2 * r - 2, rx: 3, fill: '#fff', stroke: line.color, 'stroke-width': 3 }, st);
+        else el('circle', { cx: s.x, cy: s.y, r, fill: '#fff', stroke: line.color, 'stroke-width': s.major ? 4 : 3, filter: s.major ? 'url(#soft)' : '' }, st);
+        if (s.home || s.work || s.friend) el('circle', { cx: s.x, cy: s.y, r: 13, fill: 'none', stroke: s.friend ? line.color : 'var(--accent)', 'stroke-width': 2, 'stroke-dasharray': '3 3' }, st);
         const lp = s.lp || 'l';
-        const dx = lp === 'l' ? -22 : 18;
-        el('text', { x: s.x + dx, y: s.y + 4, 'text-anchor': lp === 'l' ? 'end' : 'start', class: `st-label${s.major ? '' : ' minor'}` }, lab).textContent = s.name;
+        const pos = { l: [-22, 4, 'end'], r: [18, 4, 'start'], b: [0, 24, 'middle'], t: [0, -16, 'middle'] }[lp];
+        el('text', { x: s.x + pos[0], y: s.y + pos[1], 'text-anchor': pos[2], class: `st-label${s.major ? '' : ' minor'}` }, lab).textContent = s.name;
       }
     }
   }
@@ -104,6 +113,16 @@
     const c = color(line);
     el('circle', { r: 16, class: 'halo', fill: c, opacity: 0, 'fill-opacity': .25 }, g);
     const body = el('g', { filter: 'url(#soft)' }, g);
+    if (N.lines[line].bus) {
+      el('rect', { x: -13, y: -9, width: 26, height: 16, rx: 5, fill: c, stroke: '#fff', 'stroke-width': 2 }, body);
+      el('rect', { x: -10, y: -6, width: 20, height: 6, rx: 2, fill: '#fff', opacity: .92 }, body);
+      el('circle', { cx: -3.5, cy: -3, r: 1.3, fill: '#3b3340' }, body);
+      el('circle', { cx: 3.5, cy: -3, r: 1.3, fill: '#3b3340' }, body);
+      el('circle', { cx: -7, cy: 8, r: 2.6, fill: '#3b3340', stroke: '#fff', 'stroke-width': 1 }, body);
+      el('circle', { cx: 7, cy: 8, r: 2.6, fill: '#3b3340', stroke: '#fff', 'stroke-width': 1 }, body);
+      el('path', { class: 'arrow', d: 'M0 -15 l4 4 h-8 z', fill: c, stroke: '#fff', 'stroke-width': 1 }, g);
+      return;
+    }
     el('rect', { x: -12, y: -9, width: 24, height: 18, rx: 7, fill: c, stroke: '#fff', 'stroke-width': 2 }, body);
     el('rect', { x: -8, y: -5.5, width: 16, height: 6, rx: 3, fill: '#fff', opacity: .92 }, body);
     el('circle', { cx: -3.5, cy: -2.5, r: 1.3, fill: '#3b3340' }, body);
@@ -237,8 +256,78 @@
     return { cls: `wait ${cls}`, text: m <= 0 ? 'すぐ乗れる！' : `待ち ${m}分` };
   }
 
+  // ---- 待ち合わせ（鶴見駅近くのお店に集合）----
+  // 集合時刻に間に合う、いちばん遅い便を探す
+  function latestBefore(stationId, arriveId, deadline, filter) {
+    const cands = T.departures(stationId, deadline - 120, filter, 80)
+      .map(d => ({ ...d, arr: T.arrivalAt(d.trip, arriveId) }))
+      .filter(d => d.arr != null && d.arr <= deadline);
+    return cands.at(-1) || null;
+  }
+  function meetPlan() {
+    const meet = meetMinutes();
+    const shop = settings.shopWalk;
+    const me = latestBefore('jt-asano', 'jt-tsurumi', meet - shop, (trip) => trip.dir === 'up');
+    const fr = latestBefore('rk-turbine', 'rk-tsurumi', meet - shop, () => true);
+    return { meet, shop, me, fr };
+  }
+  // 集合時刻（運行日0時からの分）。今より前なら翌日扱いにはせず、そのまま。
+  function meetMinutes() {
+    const [h, m] = settings.meetTime.split(':').map(Number);
+    let v = h * 60 + m;
+    if (v < 180) v += 1440;
+    return v;
+  }
+  function renderMeet() {
+    const p = meetPlan();
+    const key = 'meet' + p.meet + p.shop + settings.friendName + (p.me ? p.me.trip.id + p.me.trip.delay : '') + (p.fr ? p.fr.trip.id : '');
+    state.highlight = new Set([p.me?.trip.id, p.fr?.trip.id].filter(Boolean));
+    if (key === lastPlanKey) return;
+    lastPlanKey = key;
+    const friend = settings.friendName || 'ともだち';
+    const row = (who, icon, d, from, to, extra) => !d
+      ? `<div class="meet-card"><div class="who">${icon} ${who}</div><div class="empty">間に合う便が見つかりませんでした</div></div>`
+      : `<div class="meet-card"><div class="who">${icon} ${who}</div>
+          <div class="legs">
+            <div class="t">${fmt(d.dep)}</div><div class="dot" style="--c:${color(d.trip.line)}"></div><div><b>${from}</b>${extra || ''}</div>
+            <div></div><div class="bar" style="--c:${color(d.trip.line)}"></div><div class="note">${d.trip.line === 'rinko' ? '臨港バス 鶴08' : `鶴見線 ${d.trip.dest}行`}${Math.round(d.trip.delay) >= 1 ? `<span class="chip delay">${Math.round(d.trip.delay)}分遅れ</span>` : ''}</div>
+            <div class="t">${fmt(d.arr)}</div><div class="dot" style="--c:${color(d.trip.line)}"></div><div><b>${to}</b><span class="chip wait">お店まで${p.shop}分・余裕${Math.round(p.meet - p.shop - d.arr)}分</span></div>
+          </div>
+          <button class="mini-btn" data-goto="${d.dep}">この時刻の地図を見る</button>
+        </div>`;
+    $('#plan').innerHTML = `
+      <div class="meet-form">
+        <label>集合 <input type="time" id="meet-time" value="${settings.meetTime}"></label>
+        <label>お店まで <input type="number" id="shop-walk" min="0" max="20" value="${p.shop}">分</label>
+        <label>名前 <input type="text" id="friend-name" value="${friend}" maxlength="10"></label>
+      </div>
+      ${row('あなた', '🧑‍💼', p.me, '浅野', '鶴見', p.me ? `<span class="chip platform">${asanoPlatform(p.me.trip)}</span>` : '')}
+      ${row(friend, '🧑‍🔧', p.fr, '東芝西タービン前', '鶴見駅東口')}
+      ${p.fr ? `<button class="share-btn wide" id="meet-share">${friend}にLINEで送る</button>` : ''}
+      <p class="hint">臨港バスは時刻表からの推定です（道路の混雑による遅れは反映されません）。</p>`;
+    $('#plan-mini').innerHTML = `🍚 ${settings.meetTime}集合：あなた 浅野${p.me ? fmt(p.me.dep) : '--'}発／${friend} ${p.fr ? fmt(p.fr.dep) : '--'}発のバス`;
+    const save = () => {
+      settings.meetTime = $('#meet-time').value || settings.meetTime;
+      settings.shopWalk = Math.max(0, Number($('#shop-walk').value) || 0);
+      settings.friendName = $('#friend-name').value.trim();
+      store.set('meetTime', settings.meetTime); store.set('shopWalk', settings.shopWalk); store.set('friendName', settings.friendName);
+      lastPlanKey = '';
+    };
+    ['#meet-time', '#shop-walk', '#friend-name'].forEach(id => $(id).addEventListener('change', save));
+    $('#plan').querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => {
+      const off = Math.max(0, Math.min(120, Math.round(Number(b.dataset.goto) - nowMin())));
+      state.offset = off; $('#slider').value = off;
+    }));
+    $('#meet-share')?.addEventListener('click', () => {
+      const text = `${settings.meetTime}に鶴見集合ね🍚\n🚌 鶴08 東芝西タービン前 ${fmt(p.fr.dep)}発 → 鶴見駅東口 ${fmt(p.fr.arr)}着がちょうどいいよ` +
+        (p.me ? `\n🚃 わたしは浅野 ${fmt(p.me.dep)}発の鶴見線で行きます` : '');
+      shareText(text);
+    });
+  }
+
   let lastPlanKey = '';
   function renderPlan() {
+    if (state.plan === 'meet') return renderMeet();
     const t0 = viewMin();
     const routes = plans(t0);
     const key = state.plan + state.via + routes.map(r => r.trips.join() + r.start + r.end).join('|') + routes.map(r => r.legs.map(l => l.delay || 0).join()).join();
@@ -288,7 +377,7 @@
   function describeTrip(trip) {
     const p = T.position(trip, viewMin());
     const where = !p ? '' : p.atStation ? `${N.byId[p.atStation].name}に停車中` : `${N.byId[p.from].name} → ${N.byId[p.to].name}`;
-    const lineName = trip.line === 'keikyu' ? '京急' : '鶴見線';
+    const lineName = { keikyu: '京急', tsurumi: '鶴見線', rinko: '臨港バス' }[trip.line];
     const d = Math.round(trip.delay || 0);
     return { lineName, where, delay: d, head: `${lineName} ${trip.type} ${trip.dest}行` };
   }
@@ -297,7 +386,7 @@
     const trip = T.getTrips().find(t => t.id === state.picked);
     if (!trip) { box.innerHTML = ''; return; }
     const d = describeTrip(trip);
-    const src = trip.source === 'live' ? '📡 リアルタイム' : trip.source === 'timetable' ? '🕒 時刻表から推定' : '🧸 デモダイヤ';
+    const src = trip.source === 'live' ? '📡 リアルタイム' : trip.source === 'timetable' ? '🕒 時刻表から推定' : trip.source === 'bus' ? '🕒 時刻表から推定（遅れは反映されません）' : '🧸 デモダイヤ';
     box.innerHTML = `<div class="detail"><div class="info"><b>${d.head}</b><br>${d.where}${d.delay >= 1 ? `<span class="chip delay">${d.delay}分遅れ</span>` : ''}<br><span class="note">${src}</span></div>
       <button class="share-btn" id="share">LINEで送る</button></div>`;
     $('#share').addEventListener('click', () => share(trip));
@@ -306,10 +395,13 @@
     const d = describeTrip(trip);
     const text = `いま${d.head}に乗ってるよ🚃\n${d.where}${d.delay >= 1 ? `（${d.delay}分遅れ）` : ''}`;
     const url = `${location.href.split('#')[0]}#train=${encodeURIComponent(trip.id)}`;
+    shareText(text, url);
+  }
+  async function shareText(text, url) {
     if (navigator.share) {
-      try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; }
+      try { await navigator.share(url ? { text, url } : { text }); return; } catch (e) { if (e.name === 'AbortError') return; }
     }
-    location.href = `https://line.me/R/share?text=${encodeURIComponent(`${text}\n${url}`)}`;
+    location.href = `https://line.me/R/share?text=${encodeURIComponent(url ? `${text}\n${url}` : text)}`;
   }
 
   // ---- 表示の更新 ----
@@ -342,18 +434,19 @@
   let dayKey = null;
   async function loadData() {
     O.setToken(settings.ctoken);
-    if (!O.hasToken()) { T.setTrips(T.demoTrips()); state.mode = 'demo'; return; }
     const day = O.serviceDay(new Date());
+    const bus = Bus.trips(day.calendar);
+    if (!O.hasToken()) { T.setTrips([...T.demoTrips(), ...bus]); state.mode = 'demo'; return; }
     dayKey = day.key;
     try {
       const [kq, jt] = await Promise.all([O.loadKeikyuTrips(day), O.loadTsurumiTrips(day)]);
-      T.setTrips([...kq, ...jt]);
+      T.setTrips([...kq, ...jt, ...bus]);
       state.mode = 'timetable';
       lastPlanKey = '';
       await pollLive();
     } catch (e) {
       console.error(e);
-      T.setTrips(T.demoTrips());
+      T.setTrips([...T.demoTrips(), ...bus]);
       state.mode = 'demo';
       $('#mode-pill').textContent = `読み込み失敗：${e.message}`;
     }
@@ -380,6 +473,7 @@
   document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
     state.plan = b.dataset.plan; lastPlanKey = '';
+    $('.vias').hidden = state.plan === 'meet';
   }));
   document.querySelectorAll('.via-btn').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.via-btn').forEach(x => x.classList.toggle('active', x === b));
