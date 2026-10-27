@@ -184,17 +184,29 @@
     kokudo: { label: '国道経由', jt: 'jt-kokudo', kq: 'kq-kagetsu', walk: () => settings.walkKokudo },
   };
   const name = (id) => N.byId[id].name;
+  // 走ったときの乗り換え時間（歩きの6割、最低1分）
+  const runMin = (walk) => Math.max(1, Math.round(walk * 0.6));
+  // 歩くと乗れないが走れば乗れる、ひとつ前の電車があれば返す
+  function runOption(arrT, walk, stationId, filter, destId, b) {
+    const run = runMin(walk);
+    if (run >= walk) return null;
+    const c = T.departures(stationId, arrT + run, filter, 1)[0];
+    if (!c || c.dep >= b.dep) return null;
+    return { run, dep: c.dep, end: T.arrivalAt(c.trip, destId), trip: c.trip, slack: c.dep - (arrT + run) };
+  }
 
   // かえる：浅野 →(鶴見線)→ 乗換駅 →(徒歩)→ 京急 → 子安
   function homeRoute(a, via) {
     const arrT = T.arrivalAt(a.trip, via.jt);
     if (arrT == null) return null;
     const ready = arrT + via.walk();
-    const b = T.departures(via.kq, ready, (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'kq-koyasu'), 1)[0];
+    const toKoyasu = (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'kq-koyasu');
+    const b = T.departures(via.kq, ready, toKoyasu, 1)[0];
     if (!b) return null;
     const end = T.arrivalAt(b.trip, 'kq-koyasu');
     return {
       via, start: a.dep, end, trips: [a.trip.id, b.trip.id], wait: b.dep - ready, firstTrip: a.trip.id,
+      runOpt: runOption(arrT, via.walk(), via.kq, toKoyasu, 'kq-koyasu', b),
       legs: [
         { kind: 'st', t: a.dep, name: '浅野', chips: [{ cls: 'platform', text: asanoPlatform(a.trip) }], line: 'tsurumi' },
         { kind: 'ride', line: 'tsurumi', text: `鶴見線 ${a.trip.dest}行`, delay: a.trip.delay },
@@ -212,11 +224,13 @@
     const arrT = T.arrivalAt(a.trip, via.kq);
     if (arrT == null) return null;
     const ready = arrT + via.walk();
-    const b = T.departures(via.jt, ready, (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'jt-asano'), 1)[0];
+    const toAsano = (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'jt-asano');
+    const b = T.departures(via.jt, ready, toAsano, 1)[0];
     if (!b) return null;
     const end = T.arrivalAt(b.trip, 'jt-asano');
     return {
       via, start: a.dep, end, trips: [a.trip.id, b.trip.id], wait: b.dep - ready, firstTrip: a.trip.id,
+      runOpt: runOption(arrT, via.walk(), via.jt, toAsano, 'jt-asano', b),
       legs: [
         { kind: 'st', t: a.dep, name: '子安', line: 'keikyu' },
         { kind: 'ride', line: 'keikyu', text: `京急 ${a.trip.type} ${a.trip.dest}行`, delay: a.trip.delay },
@@ -315,7 +329,7 @@
     };
     ['#meet-time', '#shop-walk', '#friend-name'].forEach(id => $(id).addEventListener('change', save));
     $('#plan').querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => {
-      const off = Math.max(0, Math.min(120, Math.round(Number(b.dataset.goto) - nowMin())));
+      const off = Math.max(0, Math.min(60, Math.round(Number(b.dataset.goto) - nowMin())));
       state.offset = off; $('#slider').value = off;
     }));
     $('#meet-share')?.addEventListener('click', () => {
@@ -338,13 +352,15 @@
     $('#plan-mini').innerHTML = !r0 ? 'この時間の乗り継ぎはありません 💤' :
       `${state.plan === 'home' ? '🏠' : '🏭'} ${r0.legs[0].name} ${fmt(r0.start)}発 → ${r0.legs.at(-1).name.replace(/ .*/, '')} ${fmt(r0.end)}着 <span class="chip via">${r0.via.label}</span>` +
       `<span class="chip ${r0.legs[4].chips[0].cls}">${r0.legs[4].chips[0].text}</span>` +
-      (r0.legs[0].chips ? `<span class="chip platform">${r0.legs[0].chips[0].text.replace(/（.*/, '')}</span>` : '');
+      (r0.legs[0].chips ? `<span class="chip platform">${r0.legs[0].chips[0].text.replace(/（.*/, '')}</span>` : '') +
+      (r0.runOpt ? `<span class="chip run">🏃 走れば${fmt(r0.runOpt.end)}着</span>` : '');
     const box = $('#plan');
     if (!routes.length) { box.innerHTML = '<div class="empty">この時間の乗り継ぎは見つかりませんでした 💤</div>'; return; }
     box.innerHTML = routes.slice(0, 3).map((r, i) => `
       <div class="route ${i === 0 ? 'best' : ''}" data-trips="${r.trips.join(',')}">
         <div class="route-head"><span>${fmt(r.start)} → ${fmt(r.end)} <span class="chip via">${r.via.label}</span></span><span class="total">${Math.round(r.end - r.start)}分${i === 0 ? '・いちばん早い' : ''}</span></div>
         <div class="legs">${r.legs.map(legHtml).join('')}</div>
+        ${runHtml(r)}
         ${altHtml(r)}
       </div>`).join('');
     box.querySelectorAll('.route').forEach(div => div.addEventListener('click', () => {
@@ -353,6 +369,12 @@
     }));
   }
   // 同じ電車で出発した場合の、もう一方の乗換地点との比較
+  function runHtml(r) {
+    const o = r.runOpt;
+    if (!o) return '';
+    const lineName = o.trip.line === 'keikyu' ? `京急 ${o.trip.type}` : '鶴見線';
+    return `<div class="run">🏃 走れば（${o.run}分）${r.legs[4].name} ${fmt(o.dep)}発の${lineName}に間に合う → ${fmt(o.end)}着（${Math.round(r.end - o.end)}分はやい）</div>`;
+  }
   function altHtml(r) {
     if (!r.alt) return '';
     const diff = Math.round(r.alt.end - r.end);
@@ -371,6 +393,7 @@
 
   // ---- 列車の詳細と LINE 共有 ----
   function pick(id) {
+    if (MapZoom.wasDrag()) return;
     state.picked = state.picked === id ? null : id;
     renderDetail();
   }
@@ -479,7 +502,11 @@
     document.querySelectorAll('.via-btn').forEach(x => x.classList.toggle('active', x === b));
     state.via = b.dataset.via; lastPlanKey = '';
   }));
-  $('#map').addEventListener('click', () => { state.picked = null; renderDetail(); });
+  $('#map').addEventListener('click', () => { if (MapZoom.wasDrag()) return; state.picked = null; renderDetail(); });
+  MapZoom.attach($('#map'));
+  $('#zoom-in').addEventListener('click', () => MapZoom.zoomCenter(1.5));
+  $('#zoom-out').addEventListener('click', () => MapZoom.zoomCenter(1 / 1.5));
+  $('#zoom-reset').addEventListener('click', () => MapZoom.reset());
 
   $('#open-settings').addEventListener('click', () => {
     $('#set-ctoken').value = settings.ctoken;
