@@ -17,19 +17,19 @@
     meetTime: store.get('meetTime', '19:00'),
     shopWalk: Number(store.get('shopWalk', 3)),
     friendName: store.get('friendName', ''),
-    stationWalk: (() => { try { return JSON.parse(store.get('stationWalk', '{}')) || {}; } catch (e) { return {}; } })(),
   };
 
   const state = {
     offset: 0,          // スライダーの分
-    plan: store.get('plan', 'station'),
-    station: store.get('boardStation', 'kq-koyasu'),
-    via: 'auto',        // auto | tsurumi | kokudo
+    from: store.get('from', 'kq-koyasu'),
+    to: store.get('to', ''),
+    dir: 'all',         // 方面の絞り込み（到着駅を指定しないとき）
+    meet: false,        // 待ち合わせ画面
     picked: null,       // 選択中の列車ID
     mode: 'demo',       // demo | timetable | live
     liveUpdated: null,
-    unmatched: [],
     highlight: new Set(),
+    geo: null,          // {lat, lon, list:[{id, dist, walk}]}
   };
 
   // ---- 時刻ユーティリティ ----
@@ -46,6 +46,8 @@
     return e;
   };
   const color = (line) => N.lines[line].color;
+  const name = (id) => N.byId[id]?.name || id;
+  const walkMin = (w) => w.id === 'walk-tsurumi' ? settings.walkTsurumi : w.id === 'walk-kokudo' ? settings.walkKokudo : w.minutes;
 
   // ---- 地図（背景・線・駅）----
   function drawStatic() {
@@ -56,7 +58,7 @@
     el('path', { d: sea, fill: 'var(--sea)' }, bg);
     el('path', { d: sea, fill: 'url(#waves)', opacity: .7 }, bg);
     const deco = [
-      ['⛩️', 36, 304, '總持寺'], ['🏠', 36, 484, 'おうち'], ['🏭', 232, 452, 'しごと'],
+      ['⛩️', 36, 330, '總持寺'], ['🏠', 36, 484, 'おうち'], ['🏭', 232, 452, 'しごと'],
       ['🌊', 370, 600, ''], ['🚢', 320, 640, ''], ['🏗️', 392, 300, ''],
     ];
     for (const [e, x, y0, label] of deco) {
@@ -88,9 +90,9 @@
     walks.innerHTML = '';
     for (const w of N.walks) {
       const a = N.byId[w.from], b = N.byId[w.to];
-      el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: 'var(--sub)', 'stroke-width': 3, 'stroke-dasharray': '1 6', 'stroke-linecap': 'round' }, walks);
-      const min = w.id === 'walk-tsurumi' ? settings.walkTsurumi : settings.walkKokudo;
-      el('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + (w.id === 'walk-kokudo' ? 14 : -7), 'text-anchor': 'middle', class: 'walk-label' }, walks).textContent = `🚶${min}分`;
+      el('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: 'var(--sub)', 'stroke-width': w.quiet ? 2 : 3, 'stroke-opacity': w.quiet ? .5 : 1, 'stroke-dasharray': '1 6', 'stroke-linecap': 'round' }, walks);
+      if (w.quiet) continue;
+      el('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + (w.id === 'walk-kokudo' ? 14 : -7), 'text-anchor': 'middle', class: 'walk-label' }, walks).textContent = `🚶${walkMin(w)}分`;
     }
 
     const st = $('#layer-stations');
@@ -106,37 +108,66 @@
         const pos = { l: [-22, 4, 'end'], r: [18, 4, 'start'], b: [0, 24, 'middle'], t: [0, -16, 'middle'] }[lp];
         el('text', { x: s.x + pos[0], y: s.y + pos[1], 'text-anchor': pos[2], class: `st-label${s.major ? '' : ' minor'}` }, lab).textContent = s.name;
         const hit = el('circle', { cx: s.x, cy: s.y, r: 15, fill: 'transparent', class: 'st-hit' }, st);
-        hit.addEventListener('click', (e) => { e.stopPropagation(); if (!MapZoom.wasDrag()) openBoard(s.id); });
+        hit.addEventListener('click', (e) => { e.stopPropagation(); if (!MapZoom.wasDrag()) chooseStation(s.id); });
       }
     }
+    drawHere();
   }
 
-  // ---- 列車 ----
-  const SHORT = { '普通': '普', '各駅停車': '各', '急行': '急', 'エアポート急行': '急', '特急': '特', '快特': '快', 'エアポート快特': '快' };
-  function trainShape(g, line, type, live) {
-    const c = color(line);
-    el('circle', { r: 16, class: 'halo', fill: c, opacity: 0, 'fill-opacity': .25 }, g);
-    const body = el('g', { filter: 'url(#soft)' }, g);
-    if (N.lines[line].bus) {
-      el('rect', { x: -13, y: -9, width: 26, height: 16, rx: 5, fill: c, stroke: '#fff', 'stroke-width': 2 }, body);
-      el('rect', { x: -10, y: -6, width: 20, height: 6, rx: 2, fill: '#fff', opacity: .92 }, body);
-      el('circle', { cx: -3.5, cy: -3, r: 1.3, fill: '#3b3340' }, body);
-      el('circle', { cx: 3.5, cy: -3, r: 1.3, fill: '#3b3340' }, body);
-      el('circle', { cx: -7, cy: 8, r: 2.6, fill: '#3b3340', stroke: '#fff', 'stroke-width': 1 }, body);
-      el('circle', { cx: 7, cy: 8, r: 2.6, fill: '#3b3340', stroke: '#fff', 'stroke-width': 1 }, body);
-      el('path', { class: 'arrow', d: 'M0 -15 l4 4 h-8 z', fill: c, stroke: '#fff', 'stroke-width': 1 }, g);
-      return;
+  // 現在地の印（最寄り駅のそばに出す）
+  function drawHere() {
+    const lab = $('#layer-labels');
+    lab.querySelector('.here')?.remove();
+    if (!state.geo) return;
+    const s = N.byId[state.geo.list[0].id];
+    const g = el('g', { class: 'here', transform: `translate(${s.x},${s.y})` }, lab);
+    el('circle', { r: 18, fill: '#3b82f6', opacity: .15, class: 'here-pulse' }, g);
+    el('circle', { r: 5, fill: '#3b82f6', stroke: '#fff', 'stroke-width': 2 }, g);
+  }
+
+  // ---- 車両（上から見た形。進行方向に回転させる）----
+  const SHORT = { '普通': '普', '各駅停車': '各', '急行': '急', 'エアポート急行': '急', '特急': '特', '快特': '快', 'エアポート快特': '快', '鶴08': '08' };
+  const LIVERY = {
+    keikyu: { body: '#e5171f', roof: '#c90f18', band: '#ffffff' },
+    tsurumi: { body: '#dfe3e8', roof: '#c3c9d1', band: '#f6c200' },
+    rinko: { body: '#ffffff', roof: '#e9efe9', band: '#2aa876' },
+  };
+  function car(g, x, len, lv, { front = false, back = false, pantograph = false } = {}) {
+    // 車体（両端を少し丸く）＋ 屋根の帯 ＋ 前面ガラス
+    el('rect', { x, y: -5, width: len, height: 10, rx: 2.5, fill: lv.body, stroke: 'rgba(0,0,0,.25)', 'stroke-width': .6 }, g);
+    el('rect', { x: x + 1.5, y: -2.4, width: len - 3, height: 4.8, rx: 1.5, fill: lv.roof }, g);
+    el('rect', { x, y: -5, width: len, height: 1.3, fill: lv.band, opacity: .95 }, g);
+    el('rect', { x, y: 3.7, width: len, height: 1.3, fill: lv.band, opacity: .95 }, g);
+    if (front) el('path', { d: `M${x + len - 2.2} -4 q2 4 0 8 h1.2 q1.6 -4 0 -8 z`, fill: '#26323d' }, g);
+    if (back) el('path', { d: `M${x + 2.2} -4 q-2 4 0 8 h-1.2 q-1.6 -4 0 -8 z`, fill: '#26323d', opacity: .6 }, g);
+    if (pantograph) el('path', { d: `M${x + len * .3} -2.2 l2.2 2.2 l-2.2 2.2 M${x + len * .3 + 4.4} -2.2 l-2.2 2.2 l2.2 2.2`, stroke: '#3b3340', 'stroke-width': .7, fill: 'none' }, g);
+  }
+  function vehicleShape(g, trip) {
+    const lv = LIVERY[trip.line];
+    el('circle', { r: 17, class: 'halo', fill: color(trip.line), 'fill-opacity': .25 }, g);
+    const veh = el('g', { class: 'veh', filter: 'url(#soft)' }, g);
+    if (trip.line === 'rinko') {
+      el('rect', { x: -10, y: -5.2, width: 20, height: 10.4, rx: 3, fill: lv.body, stroke: 'rgba(0,0,0,.3)', 'stroke-width': .6 }, veh);
+      el('rect', { x: -10, y: -5.2, width: 20, height: 1.6, rx: .8, fill: lv.band }, veh);
+      el('rect', { x: -10, y: 3.6, width: 20, height: 1.6, rx: .8, fill: lv.band }, veh);
+      el('rect', { x: -4, y: -2.6, width: 7, height: 5.2, rx: 1, fill: '#cfd8d3' }, veh); // 屋根のエアコン
+      el('path', { d: 'M8 -4.2 q2.2 4.2 0 8.4 h1 q1.6 -4.2 0 -8.4 z', fill: '#26323d' }, veh);
+    } else {
+      const lead = trip.line === 'keikyu' ? 2 : 2;
+      const len = 15;
+      // 2両編成っぽく見せる（中心を原点に）
+      const total = lead * len + (lead - 1) * 1.2;
+      for (let k = 0; k < lead; k++) {
+        const x = -total / 2 + k * (len + 1.2);
+        car(veh, x, len, lv, { front: k === lead - 1, back: k === 0, pantograph: k === lead - 1 });
+      }
     }
-    el('rect', { x: -12, y: -9, width: 24, height: 18, rx: 7, fill: c, stroke: '#fff', 'stroke-width': 2 }, body);
-    el('rect', { x: -8, y: -5.5, width: 16, height: 6, rx: 3, fill: '#fff', opacity: .92 }, body);
-    el('circle', { cx: -3.5, cy: -2.5, r: 1.3, fill: '#3b3340' }, body);
-    el('circle', { cx: 3.5, cy: -2.5, r: 1.3, fill: '#3b3340' }, body);
-    el('path', { d: 'M-1.6 -0.4 q1.6 1.4 3.2 0', stroke: '#3b3340', 'stroke-width': .9, fill: 'none', 'stroke-linecap': 'round' }, body);
-    const tt = el('text', { y: 7, 'text-anchor': 'middle', class: 'train-type' }, body);
-    tt.textContent = SHORT[type] || type.slice(0, 1);
-    if (line === 'tsurumi') tt.setAttribute('fill', '#5a4500');
-    el('path', { class: 'arrow', d: 'M0 -15 l4 4 h-8 z', fill: c, stroke: '#fff', 'stroke-width': 1 }, g);
-    if (!live) body.setAttribute('opacity', .9);
+    // 種別のバッジは回転させない
+    const badge = el('g', { class: 'badge' }, g);
+    el('circle', { cx: 0, cy: -12, r: 5.6, fill: color(trip.line), stroke: '#fff', 'stroke-width': 1.4 }, badge);
+    const tt = el('text', { x: 0, y: -9.6, 'text-anchor': 'middle', class: 'train-type' }, badge);
+    tt.textContent = SHORT[trip.type] || trip.type.slice(0, 1);
+    if (trip.line === 'tsurumi') tt.setAttribute('fill', '#5a4500');
   }
 
   const trainEls = new Map();
@@ -151,25 +182,25 @@
       let g = trainEls.get(trip.id);
       if (!g) {
         g = el('g', { class: 'train' }, layer);
-        trainShape(g, trip.line, trip.type, trip.source === 'live');
+        vehicleShape(g, trip);
         g.addEventListener('click', (e) => { e.stopPropagation(); pick(trip.id); });
         trainEls.set(trip.id, g);
       }
       // 日本は左側通行なので、進行方向の左側にずらす
-      const off = 11;
+      const off = 8;
       const ox = Math.sin(p.angle) * off, oy = -Math.cos(p.angle) * off;
-      g.setAttribute('transform', `translate(${(p.x + ox).toFixed(1)},${(p.y + oy).toFixed(1)}) scale(1.2)`);
-      const deg = p.angle * 180 / Math.PI + 90;
-      g.querySelector('.arrow').setAttribute('transform', `rotate(${deg.toFixed(0)})`);
-      g.classList.toggle('pick', state.picked === trip.id || state.highlight.has(trip.id));
-      g.classList.toggle('dim', (state.picked || state.highlight.size) && !(state.picked === trip.id || state.highlight.has(trip.id)));
+      g.setAttribute('transform', `translate(${(p.x + ox).toFixed(1)},${(p.y + oy).toFixed(1)}) scale(1.25)`);
+      g.querySelector('.veh').setAttribute('transform', `rotate(${(p.angle * 180 / Math.PI).toFixed(0)})`);
+      const on = state.picked === trip.id || state.highlight.has(trip.id);
+      g.classList.toggle('pick', on);
+      g.classList.toggle('dim', (state.picked || state.highlight.size) && !on);
       let bubble = g.querySelector('.delay');
       const delay = Math.round(trip.delay || 0);
       if (delay >= 1) {
         if (!bubble) {
           bubble = el('g', { class: 'delay' }, g);
-          el('rect', { x: 8, y: -18, width: 20, height: 12, rx: 6, fill: '#ff5a5f', stroke: '#fff', 'stroke-width': 1.5 }, bubble);
-          el('text', { x: 18, y: -9.3, 'text-anchor': 'middle', class: 'delay-bubble' }, bubble);
+          el('rect', { x: 5, y: -19, width: 20, height: 12, rx: 6, fill: '#ff5a5f', stroke: '#fff', 'stroke-width': 1.5 }, bubble);
+          el('text', { x: 15, y: -10.3, 'text-anchor': 'middle', class: 'delay-bubble' }, bubble);
         }
         bubble.querySelector('text').textContent = `+${delay}`;
       } else if (bubble) bubble.remove();
@@ -177,183 +208,149 @@
     for (const [id, g] of trainEls) if (!seen.has(id)) { g.remove(); trainEls.delete(id); }
   }
 
-  // ---- 乗り換えプラン ----
+  // ---- 共通の表示部品 ----
   // 浅野の番線：扇町方面（本線）から来る電車は2番線、海芝浦支線から来る電車は4番線
   const isBranchTrip = (trip) => ['jt-umishibaura', 'jt-shinshibaura'].includes(trip.stops[0].id);
   const asanoPlatform = (trip) => isBranchTrip(trip) ? '4番線（海芝浦から）' : '2番線（扇町方面から）';
-
-  // 乗り換え地点：鶴見⇄京急鶴見 と 国道⇄花月総持寺
-  const VIAS = {
-    tsurumi: { label: '鶴見経由', jt: 'jt-tsurumi', kq: 'kq-tsurumi', walk: () => settings.walkTsurumi },
-    kokudo: { label: '国道経由', jt: 'jt-kokudo', kq: 'kq-kagetsu', walk: () => settings.walkKokudo },
-  };
-  const name = (id) => N.byId[id].name;
-  // 走ったときの乗り換え時間（歩きの6割、最低1分）
-  const runMin = (walk) => Math.max(1, Math.round(walk * 0.6));
-  // 歩くと乗れないが走れば乗れる、ひとつ前の電車があれば返す
-  function runOption(arrT, walk, stationId, filter, destId, b) {
-    const run = runMin(walk);
-    if (run >= walk) return null;
-    const c = T.departures(stationId, arrT + run, filter, 1)[0];
-    if (!c || c.dep >= b.dep) return null;
-    return { run, dep: c.dep, end: T.arrivalAt(c.trip, destId), trip: c.trip, slack: c.dep - (arrT + run) };
-  }
-
-  // かえる：浅野 →(鶴見線)→ 乗換駅 →(徒歩)→ 京急 → 子安
-  function homeRoute(a, via) {
-    const arrT = T.arrivalAt(a.trip, via.jt);
-    if (arrT == null) return null;
-    const ready = arrT + via.walk();
-    const toKoyasu = (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'kq-koyasu');
-    const b = T.departures(via.kq, ready, toKoyasu, 1)[0];
-    if (!b) return null;
-    const end = T.arrivalAt(b.trip, 'kq-koyasu');
-    return {
-      via, start: a.dep, end, trips: [a.trip.id, b.trip.id], wait: b.dep - ready, firstTrip: a.trip.id,
-      runOpt: runOption(arrT, via.walk(), via.kq, toKoyasu, 'kq-koyasu', b),
-      legs: [
-        { kind: 'st', t: a.dep, name: '浅野', chips: [{ cls: 'platform', text: asanoPlatform(a.trip) }], line: 'tsurumi' },
-        { kind: 'ride', line: 'tsurumi', text: `鶴見線 ${a.trip.dest}行`, delay: a.trip.delay },
-        { kind: 'st', t: arrT, name: name(via.jt), line: 'tsurumi' },
-        { kind: 'walk', text: `徒歩 ${via.walk()}分` },
-        { kind: 'st', t: b.dep, name: name(via.kq), line: 'keikyu', chips: [waitChip(b.dep - ready)] },
-        { kind: 'ride', line: 'keikyu', text: `京急 ${b.trip.type} ${b.trip.dest}行`, delay: b.trip.delay },
-        { kind: 'st', t: end, name: '子安 🏠', line: 'keikyu' },
-      ],
-    };
-  }
-
-  // いく：子安 →(京急)→ 乗換駅 →(徒歩)→ 鶴見線 → 浅野
-  function workRoute(a, via) {
-    const arrT = T.arrivalAt(a.trip, via.kq);
-    if (arrT == null) return null;
-    const ready = arrT + via.walk();
-    const toAsano = (trip, i) => trip.dir === 'down' && T.stopsAfter(trip, i, 'jt-asano');
-    const b = T.departures(via.jt, ready, toAsano, 1)[0];
-    if (!b) return null;
-    const end = T.arrivalAt(b.trip, 'jt-asano');
-    return {
-      via, start: a.dep, end, trips: [a.trip.id, b.trip.id], wait: b.dep - ready, firstTrip: a.trip.id,
-      runOpt: runOption(arrT, via.walk(), via.jt, toAsano, 'jt-asano', b),
-      legs: [
-        { kind: 'st', t: a.dep, name: '子安', line: 'keikyu' },
-        { kind: 'ride', line: 'keikyu', text: `京急 ${a.trip.type} ${a.trip.dest}行`, delay: a.trip.delay },
-        { kind: 'st', t: arrT, name: name(via.kq), line: 'keikyu' },
-        { kind: 'walk', text: `徒歩 ${via.walk()}分` },
-        { kind: 'st', t: b.dep, name: name(via.jt), line: 'tsurumi', chips: [waitChip(b.dep - ready)] },
-        { kind: 'ride', line: 'tsurumi', text: `鶴見線 ${b.trip.dest}行`, delay: b.trip.delay },
-        { kind: 'st', t: end, name: '浅野 🏭', line: 'tsurumi' },
-      ],
-    };
-  }
-
-  // 両方の乗換地点で経路を作り、到着が早い順に並べる。同じ電車で帰れるなら遅く出られる方を残す。
-  function plans(t0) {
-    const home = state.plan === 'home';
-    const firsts = home
-      ? T.departures('jt-asano', t0, (trip, i) => trip.dir === 'up', 5)
-      : T.departures('kq-koyasu', t0, (trip, i) => trip.dir === 'up' && T.stopsAfter(trip, i, 'kq-tsurumi'), 6);
-    const vias = state.via === 'auto' ? Object.values(VIAS) : [VIAS[state.via]];
-    const all = [];
-    for (const a of firsts) {
-      const pair = Object.values(VIAS).map(v => (home ? homeRoute : workRoute)(a, v)).filter(Boolean);
-      for (const r of pair) {
-        if (!vias.includes(r.via)) continue;
-        r.alt = pair.find(x => x !== r);
-        all.push(r);
-      }
-    }
-    all.sort((x, y) => x.end - y.end || y.start - x.start || y.wait - x.wait);
-    const seen = new Set();
-    return all.filter(r => { const k = r.trips[1]; if (seen.has(k)) return false; seen.add(k); return true; });
-  }
-
+  const platformChip = (stationId, trip) => stationId === 'jt-asano' && trip.dir === 'up' ? `<span class="chip platform">${asanoPlatform(trip)}</span>` : '';
+  const lineLabel = (trip) => trip.line === 'keikyu' ? `京急 ${trip.type}` : trip.line === 'tsurumi' ? '鶴見線' : '臨港バス 鶴08';
+  const delayChip = (trip) => Math.round(trip.delay || 0) >= 1 ? `<span class="chip delay">${Math.round(trip.delay)}分遅れ</span>` : '';
   function waitChip(w) {
     const m = Math.round(w);
     const cls = m <= 1 ? 'tight' : m >= 10 ? 'long' : '';
-    return { cls: `wait ${cls}`, text: m <= 0 ? 'すぐ乗れる！' : `待ち ${m}分` };
+    return `<span class="chip wait ${cls}">${m <= 0 ? 'すぐ乗れる！' : `待ち ${m}分`}</span>`;
+  }
+  // ---- 出発駅・到着駅の選択 ----
+  function fillSelects() {
+    const opts = (sel, withNone) => (withNone ? `<option value="">指定なし（次の電車を見る）</option>` : '') +
+      Object.values(N.lines).map(line => `<optgroup label="${line.name}">${line.stations.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${x.name}</option>`).join('')}</optgroup>`).join('');
+    $('#from').innerHTML = opts(state.from, false);
+    $('#to').innerHTML = opts(state.to, true);
+  }
+  function setOD(from, to) {
+    state.from = from; state.to = to || '';
+    if (state.to === state.from) state.to = '';
+    state.dir = 'all'; state.meet = false;
+    store.set('from', state.from); store.set('to', state.to);
+    fillSelects(); lastKey = '';
+    $('#sheet').classList.remove('collapsed');
+  }
+  // 地図の駅をタップ：出発駅が未選択扱いなら出発に、そうでなければ到着に入れる
+  function chooseStation(id) {
+    if (state.to || id === state.from) setOD(id, '');
+    else setOD(state.from, id);
   }
 
-  // ---- えき：好きな駅の次の電車 ----
+  // ---- 次の電車（到着駅を指定しないとき）----
   const DIRS = {
     keikyu: [['up', '上り 川崎・品川方面'], ['down', '下り 横浜方面']],
     tsurumi: [['up', '鶴見方面'], ['down', '扇町・海芝浦方面']],
     rinko: [['up', '鶴見駅東口方面']],
   };
-  function openBoard(id) {
-    state.station = id;
-    store.set('boardStation', id);
-    selectTab('station');
-    $('#sheet').classList.remove('collapsed');
-  }
-  const stationWalk = (id) => Number(settings.stationWalk[id] ?? 0);
-  // 家・職場などからその駅まで歩く分に対して、間に合うかどうか
-  function catchChip(left, walk) {
-    if (!walk) return '';
-    const spare = Math.round(left - walk);
-    if (spare >= 0) return `<span class="chip wait ${spare <= 1 ? 'tight' : ''}">${spare === 0 ? '今出ればギリギリ' : `あと${spare}分以内に出ればOK`}</span>`;
-    if (left >= runMin(walk)) return `<span class="chip run">🏃 走れば間に合う</span>`;
-    return `<span class="chip miss">間に合わない</span>`;
-  }
-  function renderStation() {
-    const id = state.station;
+  function renderBoard() {
+    const id = state.from;
     const st = N.byId[id];
     const t0 = viewMin();
-    const walk = stationWalk(id);
-    const groups = DIRS[st.line].map(([dir, label]) => ({
-      label, rows: T.departures(id, t0, (trip) => trip.dir === dir, 4),
-    }));
-    const key = 'st' + id + walk + Math.floor(t0 * 2) + groups.map(g => g.rows.map(r => r.trip.id + r.trip.delay).join()).join('|');
+    const dirs = DIRS[st.line].filter(([d]) => state.dir === 'all' || state.dir === d);
+    const groups = dirs.map(([dir, label]) => ({ dir, label, rows: T.departures(id, t0, (trip) => trip.dir === dir, state.dir === 'all' ? 4 : 8) }));
+    const key = 'b' + id + state.dir + Math.floor(t0 * 2) + T.getVersion() + groups.map(g => g.rows.map(r => r.trip.id).join()).join('|');
     state.highlight = new Set(groups.map(g => g.rows[0]?.trip.id).filter(Boolean));
-    if (key === lastPlanKey) return;
-    lastPlanKey = key;
-    const options = Object.values(N.lines).map(line => `<optgroup label="${line.name}">${line.stations.map(x => `<option value="${x.id}" ${x.id === id ? 'selected' : ''}>${x.name}</option>`).join('')}</optgroup>`).join('');
+    if (key === lastKey) return;
+    lastKey = key;
     const rowHtml = (r) => {
       const left = r.dep - t0;
       const p = T.position(r.trip, t0);
       const first = r.trip.stops[0];
-      const where = !p ? (first.id === id ? '当駅始発' : `${N.byId[first.id].name} ${fmt(first.dep + (r.trip.delay || 0))}発`) : p.atStation === id ? 'まもなく発車' : p.atStation ? `いま${N.byId[p.atStation].name}` : `いま${N.byId[p.from].name}→${N.byId[p.to].name}`;
+      const where = !p ? (first.id === id ? '当駅始発' : `${name(first.id)} ${fmt(first.dep + (r.trip.delay || 0))}発`)
+        : p.atStation === id ? 'まもなく発車' : p.atStation ? `いま${name(p.atStation)}` : `いま${name(p.from)}→${name(p.to)}`;
       const d = Math.round(r.trip.delay || 0);
-      const plat = id === 'jt-asano' && r.trip.dir === 'up' ? `<span class="chip platform">${asanoPlatform(r.trip).replace(/（.*/, '')}</span>` : '';
       return `<div class="board-row" data-trip="${r.trip.id}">
         <div class="left"><b>${left < 1 ? 'まもなく' : `${Math.floor(left)}分`}</b><small>${fmt(r.dep)}${d >= 1 ? `（+${d}）` : ''}</small></div>
-        <div class="body"><div><span class="type t-${r.trip.line}">${r.trip.type}</span> ${r.trip.dest}行${plat}</div>
-          <div class="note">${where}${catchChip(left, walk)}</div></div>
+        <div class="body"><div><span class="type t-${r.trip.line}">${r.trip.type}</span> ${r.trip.dest}行${platformChip(id, r.trip)}</div>
+          <div class="note">${where}</div></div>
       </div>`;
     };
+    const dirChips = DIRS[st.line].length > 1
+      ? `<div class="vias">${[['all', 'すべての方面'], ...DIRS[st.line]].map(([d, l]) => `<button class="via-btn ${state.dir === d ? 'active' : ''}" data-dir="${d}">${l}</button>`).join('')}</div>` : '';
+    const g = state.geo?.list.find(x => x.id === id);
     $('#plan').innerHTML = `
-      <div class="meet-form">
-        <label>駅 <select id="board-station">${options}</select></label>
-        <label>ここまで徒歩 <input type="number" id="board-walk" min="0" max="60" value="${walk}">分</label>
-      </div>
-      ${groups.map(g => `<div class="board"><div class="board-head">${g.label}</div>${g.rows.length ? g.rows.map(rowHtml).join('') : '<div class="empty">この先の電車はありません 💤</div>'}</div>`).join('')}
-      <p class="hint">地図の駅をタップしても切り替えられます。徒歩の分数を入れると、出発までの余裕を表示します。</p>`;
-    $('#plan-mini').innerHTML = `🚉 ${st.name}：` + groups.map(g => g.rows[0] ? `${g.label.split(' ')[0]} ${Math.max(0, Math.floor(g.rows[0].dep - t0))}分後` : '').filter(Boolean).join('・');
-    $('#board-station').addEventListener('change', (e) => openBoard(e.target.value));
-    $('#board-walk').addEventListener('change', (e) => {
-      settings.stationWalk[id] = Math.max(0, Number(e.target.value) || 0);
-      store.set('stationWalk', JSON.stringify(settings.stationWalk));
-      lastPlanKey = '';
-    });
+      ${dirChips}
+      ${g && g.dist < 2500 ? `<div class="walk-row">📍 現在地から${name(id)}まで約${Math.round(g.dist / 10) * 10}m</div>` : ''}
+      ${groups.map(g => `<div class="board"><div class="board-head">${g.label}</div>${g.rows.length ? g.rows.map(rowHtml).join('') : '<div class="empty">この先の電車はありません 💤</div>'}</div>`).join('')}`;
+    $('#plan-mini').innerHTML = `🚉 ${st.name}：` + groups.map(g => g.rows[0] ? `${g.label.split(' ')[0]} あと${Math.max(0, Math.floor(g.rows[0].dep - t0))}分` : '').filter(Boolean).join('・');
+    $('#plan').querySelectorAll('[data-dir]').forEach(b => b.addEventListener('click', () => { state.dir = b.dataset.dir; lastKey = ''; }));
     $('#plan').querySelectorAll('.board-row').forEach(div => div.addEventListener('click', () => pick(div.dataset.trip)));
   }
 
+  // ---- 経路（出発駅→到着駅）----
+  let routeCache = { key: '', routes: [] };
+  function routesNow(t0) {
+    const key = [state.from, state.to, Math.floor(t0 * 2), T.getVersion(), settings.walkTsurumi, settings.walkKokudo].join('|');
+    if (routeCache.key !== key) routeCache = { key, routes: Route.search(state.from, state.to, t0, { walkMin }) };
+    return routeCache.routes;
+  }
+  function viaSummary(r) {
+    const rides = r.legs.filter(l => l.kind === 'ride');
+    if (rides.length === 1) return '乗り換えなし';
+    const w = r.legs.find((l, i) => l.kind === 'walk' && i > 0 && i < r.legs.length - 1);
+    return w ? `${name(w.from)}→${name(w.to)} 徒歩乗換` : `${name(rides[0].to)}で乗換`;
+  }
+  function renderRoutes() {
+    const t0 = viewMin();
+    const routes = routesNow(t0);
+    const key = 'r' + routeCache.key + Math.floor(t0 * 2);
+    state.highlight = new Set(routes[0] ? routes[0].legs.filter(l => l.kind === 'ride').map(l => l.trip.id) : []);
+    if (key === lastKey) return;
+    lastKey = key;
+    const r0 = routes[0];
+    $('#plan-mini').innerHTML = !r0 ? `${name(state.from)}→${name(state.to)}：この時間の経路はありません 💤`
+      : `${name(state.from)} ${fmt(r0.start)}発 → ${name(state.to)} ${fmt(r0.end)}着 <span class="chip via">${viaSummary(r0)}</span>` +
+        (r0.legs.find(l => l.runOpt) ? `<span class="chip run">🏃 走れば${fmt(r0.legs.find(l => l.runOpt).runOpt.end)}着</span>` : '');
+    const box = $('#plan');
+    if (!routes.length) {
+      box.innerHTML = `<div class="empty">この時間の経路が見つかりませんでした 💤${N.byId[state.to].line === 'rinko' ? '<br>臨港バスは鶴見駅東口ゆきだけ入っています。' : ''}</div>`;
+      return;
+    }
+    box.innerHTML = routes.map((r, i) => `
+      <div class="route ${i === 0 ? 'best' : ''}" data-trips="${r.legs.filter(l => l.kind === 'ride').map(l => l.trip.id).join(',')}">
+        <div class="route-head"><span>${fmt(r.start)} → ${fmt(r.end)} <span class="chip via">${viaSummary(r)}</span></span><span class="total">${Math.round(r.end - r.start)}分${i === 0 ? '・いちばん早い' : ''}</span></div>
+        <div class="leave">${r.start - t0 < 1 ? 'まもなく出発' : `あと${Math.floor(r.start - t0)}分で出発`}</div>
+        <div class="legs">${legsHtml(r)}</div>
+        ${r.legs.filter(l => l.runOpt).map(l => `<div class="run">🏃 走れば（${l.runOpt.run}分）${name(l.from)} ${fmt(l.runOpt.dep)}発の${lineLabel(l.runOpt.trip)}に間に合う → ${fmt(l.runOpt.end)}着（${Math.round(r.end - l.runOpt.end)}分はやい）</div>`).join('')}
+      </div>`).join('');
+    box.querySelectorAll('.route').forEach(div => div.addEventListener('click', () => {
+      state.highlight = new Set(div.dataset.trips.split(','));
+      state.picked = null;
+    }));
+  }
+  function legsHtml(r) {
+    const dot = (line) => `<div class="dot" style="--c:${line ? color(line) : 'var(--sub)'}"></div>`;
+    const stRow = (t, id, line, chips = '') => `<div class="t">${fmt(t)}</div>${dot(line)}<div><b>${name(id)}</b>${chips}</div>`;
+    let html = '';
+    r.legs.forEach((l, i) => {
+      const prev = r.legs[i - 1];
+      if (l.kind === 'walk') {
+        if (i === 0) html += stRow(l.t ?? (r.legs[1].dep - l.min), l.from, null);
+        html += `<div></div><div class="bar walk"></div><div class="note">🚶 徒歩 ${l.min}分</div>`;
+        if (i === r.legs.length - 1) html += stRow(r.end, l.to, null);
+        return;
+      }
+      const chips = platformChip(l.from, l.trip) + (l.wait != null ? waitChip(l.wait) : '');
+      if (!prev || prev.kind === 'walk' || prev.to !== l.from) html += stRow(l.dep, l.from, l.trip.line, chips);
+      else html += `<div></div><div></div><div class="note">${name(l.from)}で乗り換え ${chips}</div>`;
+      html += `<div></div><div class="bar" style="--c:${color(l.trip.line)}"></div><div class="note">${lineLabel(l.trip)} ${l.trip.dest}行${delayChip(l.trip)}</div>`;
+      html += stRow(l.arr, l.to, l.trip.line);
+    });
+    return html;
+  }
+
   // ---- 待ち合わせ（鶴見駅近くのお店に集合）----
-  // 集合時刻に間に合う、いちばん遅い便を探す
   function latestBefore(stationId, arriveId, deadline, filter) {
     const cands = T.departures(stationId, deadline - 120, filter, 80)
-      .map(d => ({ ...d, arr: T.arrivalAt(d.trip, arriveId) }))
+      .map(d => ({ ...d, arr: T.arrivalAt(d.trip, arriveId, d.index) }))
       .filter(d => d.arr != null && d.arr <= deadline);
     return cands.at(-1) || null;
   }
-  function meetPlan() {
-    const meet = meetMinutes();
-    const shop = settings.shopWalk;
-    const me = latestBefore('jt-asano', 'jt-tsurumi', meet - shop, (trip) => trip.dir === 'up');
-    const fr = latestBefore('rk-turbine', 'rk-tsurumi', meet - shop, () => true);
-    return { meet, shop, me, fr };
-  }
-  // 集合時刻（運行日0時からの分）。今より前なら翌日扱いにはせず、そのまま。
   function meetMinutes() {
     const [h, m] = settings.meetTime.split(':').map(Number);
     let v = h * 60 + m;
@@ -361,39 +358,43 @@
     return v;
   }
   function renderMeet() {
-    const p = meetPlan();
-    const key = 'meet' + p.meet + p.shop + settings.friendName + (p.me ? p.me.trip.id + p.me.trip.delay : '') + (p.fr ? p.fr.trip.id : '');
-    state.highlight = new Set([p.me?.trip.id, p.fr?.trip.id].filter(Boolean));
-    if (key === lastPlanKey) return;
-    lastPlanKey = key;
+    const meet = meetMinutes();
+    const shop = settings.shopWalk;
+    const meFrom = state.from && N.byId[state.from].line === 'tsurumi' ? state.from : 'jt-asano';
+    const me = latestBefore(meFrom, 'jt-tsurumi', meet - shop, (trip) => trip.dir === 'up');
+    const fr = latestBefore('rk-turbine', 'rk-tsurumi', meet - shop, () => true);
     const friend = settings.friendName || 'ともだち';
+    const key = 'meet' + meet + shop + friend + meFrom + (me ? me.trip.id + me.trip.delay : '') + (fr ? fr.trip.id : '');
+    state.highlight = new Set([me?.trip.id, fr?.trip.id].filter(Boolean));
+    if (key === lastKey) return;
+    lastKey = key;
     const row = (who, icon, d, from, to, extra) => !d
       ? `<div class="meet-card"><div class="who">${icon} ${who}</div><div class="empty">間に合う便が見つかりませんでした</div></div>`
       : `<div class="meet-card"><div class="who">${icon} ${who}</div>
           <div class="legs">
             <div class="t">${fmt(d.dep)}</div><div class="dot" style="--c:${color(d.trip.line)}"></div><div><b>${from}</b>${extra || ''}</div>
-            <div></div><div class="bar" style="--c:${color(d.trip.line)}"></div><div class="note">${d.trip.line === 'rinko' ? '臨港バス 鶴08' : `鶴見線 ${d.trip.dest}行`}${Math.round(d.trip.delay) >= 1 ? `<span class="chip delay">${Math.round(d.trip.delay)}分遅れ</span>` : ''}</div>
-            <div class="t">${fmt(d.arr)}</div><div class="dot" style="--c:${color(d.trip.line)}"></div><div><b>${to}</b><span class="chip wait">お店まで${p.shop}分・余裕${Math.round(p.meet - p.shop - d.arr)}分</span></div>
+            <div></div><div class="bar" style="--c:${color(d.trip.line)}"></div><div class="note">${d.trip.line === 'rinko' ? '臨港バス 鶴08' : `鶴見線 ${d.trip.dest}行`}${delayChip(d.trip)}</div>
+            <div class="t">${fmt(d.arr)}</div><div class="dot" style="--c:${color(d.trip.line)}"></div><div><b>${to}</b><span class="chip wait">お店まで${shop}分・余裕${Math.round(meet - shop - d.arr)}分</span></div>
           </div>
           <button class="mini-btn" data-goto="${d.dep}">この時刻の地図を見る</button>
         </div>`;
     $('#plan').innerHTML = `
       <div class="meet-form">
         <label>集合 <input type="time" id="meet-time" value="${settings.meetTime}"></label>
-        <label>お店まで <input type="number" id="shop-walk" min="0" max="20" value="${p.shop}">分</label>
+        <label>お店まで <input type="number" id="shop-walk" min="0" max="20" value="${shop}">分</label>
         <label>名前 <input type="text" id="friend-name" value="${friend}" maxlength="10"></label>
       </div>
-      ${row('あなた', '🧑‍💼', p.me, '浅野', '鶴見', p.me ? `<span class="chip platform">${asanoPlatform(p.me.trip)}</span>` : '')}
-      ${row(friend, '🧑‍🔧', p.fr, '東芝西タービン前', '鶴見駅東口')}
-      ${p.fr ? `<button class="share-btn wide" id="meet-share">${friend}にLINEで送る</button>` : ''}
-      <p class="hint">臨港バスは時刻表からの推定です（道路の混雑による遅れは反映されません）。</p>`;
-    $('#plan-mini').innerHTML = `🍚 ${settings.meetTime}集合：あなた 浅野${p.me ? fmt(p.me.dep) : '--'}発／${friend} ${p.fr ? fmt(p.fr.dep) : '--'}発のバス`;
+      ${row('あなた', '🧑‍💼', me, name(meFrom), 'JR鶴見', me ? platformChip(meFrom, me.trip) : '')}
+      ${row(friend, '🧑‍🔧', fr, '東芝西タービン前', '鶴見駅東口')}
+      ${fr ? `<button class="share-btn wide" id="meet-share">${friend}にLINEで送る</button>` : ''}
+      <p class="hint">あなたの出発駅は、出発駅が鶴見線の駅ならその駅、ほかは浅野です。臨港バスは時刻表からの推定です（道路の混雑による遅れは反映されません）。</p>`;
+    $('#plan-mini').innerHTML = `🍚 ${settings.meetTime}集合：あなた ${name(meFrom)}${me ? fmt(me.dep) : '--'}発／${friend} ${fr ? fmt(fr.dep) : '--'}発のバス`;
     const save = () => {
       settings.meetTime = $('#meet-time').value || settings.meetTime;
       settings.shopWalk = Math.max(0, Number($('#shop-walk').value) || 0);
       settings.friendName = $('#friend-name').value.trim();
       store.set('meetTime', settings.meetTime); store.set('shopWalk', settings.shopWalk); store.set('friendName', settings.friendName);
-      lastPlanKey = '';
+      lastKey = '';
     };
     ['#meet-time', '#shop-walk', '#friend-name'].forEach(id => $(id).addEventListener('change', save));
     $('#plan').querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => {
@@ -401,63 +402,19 @@
       state.offset = off; $('#slider').value = off;
     }));
     $('#meet-share')?.addEventListener('click', () => {
-      const text = `${settings.meetTime}に鶴見集合ね🍚\n🚌 鶴08 東芝西タービン前 ${fmt(p.fr.dep)}発 → 鶴見駅東口 ${fmt(p.fr.arr)}着がちょうどいいよ` +
-        (p.me ? `\n🚃 わたしは浅野 ${fmt(p.me.dep)}発の鶴見線で行きます` : '');
+      const text = `${settings.meetTime}に鶴見集合ね🍚\n🚌 鶴08 東芝西タービン前 ${fmt(fr.dep)}発 → 鶴見駅東口 ${fmt(fr.arr)}着がちょうどいいよ` +
+        (me ? `\n🚃 わたしは${name(meFrom)} ${fmt(me.dep)}発の鶴見線で行きます` : '');
       shareText(text);
     });
   }
 
-  let lastPlanKey = '';
-  function renderPlan() {
-    if (state.plan === 'meet') return renderMeet();
-    if (state.plan === 'station') return renderStation();
-    const t0 = viewMin();
-    const routes = plans(t0);
-    const key = state.plan + state.via + routes.map(r => r.trips.join() + r.start + r.end).join('|') + routes.map(r => r.legs.map(l => l.delay || 0).join()).join();
-    state.highlight = new Set(routes[0] ? routes[0].trips : []);
-    if (key === lastPlanKey) return;
-    lastPlanKey = key;
-    const r0 = routes[0];
-    $('#plan-mini').innerHTML = !r0 ? 'この時間の乗り継ぎはありません 💤' :
-      `${state.plan === 'home' ? '🏠' : '🏭'} ${r0.legs[0].name} ${fmt(r0.start)}発 → ${r0.legs.at(-1).name.replace(/ .*/, '')} ${fmt(r0.end)}着 <span class="chip via">${r0.via.label}</span>` +
-      `<span class="chip ${r0.legs[4].chips[0].cls}">${r0.legs[4].chips[0].text}</span>` +
-      (r0.legs[0].chips ? `<span class="chip platform">${r0.legs[0].chips[0].text.replace(/（.*/, '')}</span>` : '') +
-      (r0.runOpt ? `<span class="chip run">🏃 走れば${fmt(r0.runOpt.end)}着</span>` : '');
-    const box = $('#plan');
-    if (!routes.length) { box.innerHTML = '<div class="empty">この時間の乗り継ぎは見つかりませんでした 💤</div>'; return; }
-    box.innerHTML = routes.slice(0, 3).map((r, i) => `
-      <div class="route ${i === 0 ? 'best' : ''}" data-trips="${r.trips.join(',')}">
-        <div class="route-head"><span>${fmt(r.start)} → ${fmt(r.end)} <span class="chip via">${r.via.label}</span></span><span class="total">${Math.round(r.end - r.start)}分${i === 0 ? '・いちばん早い' : ''}</span></div>
-        <div class="legs">${r.legs.map(legHtml).join('')}</div>
-        ${runHtml(r)}
-        ${altHtml(r)}
-      </div>`).join('');
-    box.querySelectorAll('.route').forEach(div => div.addEventListener('click', () => {
-      state.highlight = new Set(div.dataset.trips.split(','));
-      state.picked = null;
-    }));
-  }
-  // 同じ電車で出発した場合の、もう一方の乗換地点との比較
-  function runHtml(r) {
-    const o = r.runOpt;
-    if (!o) return '';
-    const lineName = o.trip.line === 'keikyu' ? `京急 ${o.trip.type}` : '鶴見線';
-    return `<div class="run">🏃 走れば（${o.run}分）${r.legs[4].name} ${fmt(o.dep)}発の${lineName}に間に合う → ${fmt(o.end)}着（${Math.round(r.end - o.end)}分はやい）</div>`;
-  }
-  function altHtml(r) {
-    if (!r.alt) return '';
-    const diff = Math.round(r.alt.end - r.end);
-    const text = diff > 0 ? `${diff}分おそい` : diff < 0 ? `${-diff}分はやい` : '同じ到着';
-    return `<div class="alt">同じ電車で${r.alt.via.label}なら ${fmt(r.alt.end)}着（${text}・待ち${Math.max(0, Math.round(r.alt.wait))}分）</div>`;
-  }
-  function legHtml(l) {
-    const c = l.line ? `style="--c:${color(l.line)}"` : '';
-    if (l.kind === 'st') {
-      return `<div class="t">${fmt(l.t)}</div><div class="dot" ${c}></div><div><b>${l.name}</b>${(l.chips || []).map(ch => `<span class="chip ${ch.cls}">${ch.text}</span>`).join('')}</div>`;
-    }
-    if (l.kind === 'walk') return `<div></div><div class="bar walk"></div><div class="note">🚶 ${l.text}</div>`;
-    const d = Math.round(l.delay || 0);
-    return `<div></div><div class="bar" ${c}></div><div class="note">${l.text}${d >= 1 ? `<span class="chip delay">${d}分遅れ</span>` : ''}</div>`;
+  let lastKey = '';
+  function renderPanel() {
+    $('#presets').querySelectorAll('[data-preset]').forEach(b => b.classList.toggle('active',
+      b.dataset.preset === 'meet' ? state.meet : !state.meet && b.dataset.preset === `${state.from}>${state.to}`));
+    if (state.meet) return renderMeet();
+    if (!state.to) return renderBoard();
+    return renderRoutes();
   }
 
   // ---- 列車の詳細と LINE 共有 ----
@@ -468,7 +425,7 @@
   }
   function describeTrip(trip) {
     const p = T.position(trip, viewMin());
-    const where = !p ? '' : p.atStation ? `${N.byId[p.atStation].name}に停車中` : `${N.byId[p.from].name} → ${N.byId[p.to].name}`;
+    const where = !p ? '' : p.atStation ? `${name(p.atStation)}に停車中` : `${name(p.from)} → ${name(p.to)}`;
     const lineName = { keikyu: '京急', tsurumi: '鶴見線', rinko: '臨港バス' }[trip.line];
     const d = Math.round(trip.delay || 0);
     return { lineName, where, delay: d, head: `${lineName} ${trip.type} ${trip.dest}行` };
@@ -496,6 +453,37 @@
     location.href = `https://line.me/R/share?text=${encodeURIComponent(url ? `${text}\n${url}` : text)}`;
   }
 
+  // ---- 現在地 ----
+  async function locate(silent) {
+    const btn = $('#locate');
+    btn.classList.add('busy');
+    try {
+      const pos = await Geo.locate();
+      state.geo = { ...pos, list: Geo.nearest(pos.lat, pos.lon) };
+      const near = state.geo.list[0];
+      if (near.dist > 5000) {
+        $('#near').innerHTML = '📍 近くに対象の駅がありません（表示範囲から5km以上）';
+      } else {
+        setOD(near.id, state.to === near.id ? '' : state.to);
+        renderNear();
+      }
+      drawHere();
+      lastKey = '';
+    } catch (e) {
+      if (!silent) $('#near').textContent = `📍 ${e.message}`;
+    } finally {
+      btn.classList.remove('busy');
+    }
+  }
+  // 最寄りの駅を路線ごとに1つずつ（近い順に3つまで）
+  function renderNear() {
+    if (!state.geo) { $('#near').innerHTML = ''; return; }
+    const seen = new Set();
+    const picks = state.geo.list.filter(x => { const l = N.byId[x.id].line; if (seen.has(l)) return false; seen.add(l); return true; }).slice(0, 3);
+    $('#near').innerHTML = '📍 最寄り：' + picks.map(x => `<button class="near-btn ${x.id === state.from ? 'active' : ''}" data-id="${x.id}">${name(x.id)} ${x.dist < 1000 ? `${Math.round(x.dist / 10) * 10}m` : `${(x.dist / 1000).toFixed(1)}km`}</button>`).join('');
+    $('#near').querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => { setOD(b.dataset.id, state.to); renderNear(); }));
+  }
+
   // ---- 表示の更新 ----
   function renderClock() {
     const t = viewMin();
@@ -516,7 +504,7 @@
     if (ts - lastFrame > 100) {
       lastFrame = ts;
       renderClock();
-      renderPlan();
+      renderPanel();
       renderTrains();
     }
     requestAnimationFrame(loop);
@@ -534,7 +522,8 @@
       const [kq, jt] = await Promise.all([O.loadKeikyuTrips(day), O.loadTsurumiTrips(day)]);
       T.setTrips([...kq, ...jt, ...bus]);
       state.mode = 'timetable';
-      lastPlanKey = '';
+      lastKey = '';
+      O.loadStationGeo().catch(() => {});
       await pollLive();
     } catch (e) {
       console.error(e);
@@ -548,10 +537,10 @@
     if (O.serviceDay(new Date()).key !== dayKey) return loadData();
     try {
       const r = await O.applyKeikyuLive(T.getTrips(), nowMin());
+      T.touch();
       state.liveUpdated = r.updated;
-      state.unmatched = r.unmatched;
       state.mode = 'live';
-      lastPlanKey = '';
+      lastKey = '';
       if (state.picked) renderDetail();
     } catch (e) {
       console.warn('live', e);
@@ -562,17 +551,14 @@
   // ---- UI ----
   $('#slider').addEventListener('input', (e) => { state.offset = Number(e.target.value); if (state.picked) renderDetail(); });
   $('#live-btn').addEventListener('click', () => { state.offset = 0; $('#slider').value = 0; });
-  function selectTab(plan) {
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.dataset.plan === plan));
-    state.plan = plan; lastPlanKey = '';
-    store.set('plan', plan);
-    $('.vias').hidden = plan === 'meet' || plan === 'station';
-  }
-  document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => selectTab(b.dataset.plan)));
-  selectTab(state.plan);
-  document.querySelectorAll('.via-btn').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.via-btn').forEach(x => x.classList.toggle('active', x === b));
-    state.via = b.dataset.via; lastPlanKey = '';
+  $('#from').addEventListener('change', (e) => setOD(e.target.value, state.to));
+  $('#to').addEventListener('change', (e) => setOD(state.from, e.target.value));
+  $('#swap').addEventListener('click', () => { if (state.to) setOD(state.to, state.from); });
+  $('#locate').addEventListener('click', () => locate(false));
+  $('#presets').querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.preset === 'meet') { state.meet = !state.meet; lastKey = ''; return; }
+    const [f, t] = b.dataset.preset.split('>');
+    setOD(f, t);
   }));
   $('#map').addEventListener('click', () => { if (MapZoom.wasDrag()) return; state.picked = null; renderDetail(); });
   MapZoom.attach($('#map'));
@@ -595,7 +581,7 @@
     store.set('odptChallengeToken', settings.ctoken);
     store.set('walkTsurumi', settings.walkTsurumi);
     store.set('walkKokudo', settings.walkKokudo);
-    drawStatic(); lastPlanKey = '';
+    drawStatic(); lastKey = '';
     if (tokenChanged) loadData();
   });
   $('#open-about').addEventListener('click', () => $('#about').showModal());
@@ -611,14 +597,16 @@
   const m = location.hash.match(/train=([^&]+)/);
   if (m) state.picked = decodeURIComponent(m[1]);
 
-  // 初回はチェックページで保存したトークンも拾う
-  if (!settings.ctoken) settings.ctoken = store.get('odptChallengeToken', '');
-
+  if (!N.byId[state.from]) state.from = 'kq-koyasu';
+  if (state.to && !N.byId[state.to]) state.to = '';
+  fillSelects();
   drawStatic();
   loadData().then(() => renderDetail());
   setInterval(pollLive, 30000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
   requestAnimationFrame(loop);
+  // 位置情報をすでに許可していれば、起動時に最寄り駅を出す
+  Geo.granted().then(ok => { if (ok) locate(true); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

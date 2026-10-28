@@ -70,6 +70,8 @@ window.NETWORK = (() => {
   const walks = [
     { id: 'walk-tsurumi', from: 'jt-tsurumi', to: 'kq-tsurumi', label: '鶴見 ⇄ 京急鶴見', minutes: 4 },
     { id: 'walk-kokudo', from: 'kq-kagetsu', to: 'jt-kokudo', label: '花月総持寺 ⇄ 国道', minutes: 5 },
+    { id: 'walk-bus-kq', from: 'rk-tsurumi', to: 'kq-tsurumi', label: '鶴見駅東口 ⇄ 京急鶴見', minutes: 3, quiet: true },
+    { id: 'walk-bus-jr', from: 'rk-tsurumi', to: 'jt-tsurumi', label: '鶴見駅東口 ⇄ JR鶴見', minutes: 5, quiet: true },
   ];
 
   // 駅と駅の間を曲げて描く区間（鶴見線は JR鶴見を出て京急をまたいでから国道へ）

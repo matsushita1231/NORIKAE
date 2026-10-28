@@ -74,8 +74,23 @@ window.Timetable = (() => {
     return trips;
   }
 
-  let trips = demoTrips();
-  const setTrips = (list) => { trips = list; };
+  let trips = [];
+  let byStation = {}; // 駅ID → [{trip, i}]（発車する停車駅だけ）
+  let version = 0;    // ダイヤや遅れが変わるたびに増える（計算結果のキャッシュ用）
+  function setTrips(list) {
+    trips = list;
+    byStation = {};
+    for (const trip of trips) {
+      trip.stops.forEach((s, i) => {
+        if (s.pass || i === trip.stops.length - 1) return;
+        (byStation[s.id] ||= []).push({ trip, i });
+      });
+    }
+    version++;
+  }
+  const touch = () => { version++; };
+  const getVersion = () => version;
+  setTrips(demoTrips());
   const getTrips = () => trips;
 
   const at = (stop, key, trip) => stop[key] + (trip.delay || 0);
@@ -105,20 +120,19 @@ window.Timetable = (() => {
   // 駅 stationId を時刻 t 以降に発車（停車）する列車。filter(trip, stopIndex) で絞り込み。
   function departures(stationId, t, filter = () => true, limit = 5) {
     const out = [];
-    for (const trip of trips) {
-      const i = trip.stops.findIndex(s => s.id === stationId && !s.pass);
-      if (i < 0 || i === trip.stops.length - 1) continue;
+    for (const { trip, i } of byStation[stationId] || []) {
       const dep = at(trip.stops[i], 'dep', trip);
       if (dep >= t && filter(trip, i)) out.push({ trip, index: i, dep });
     }
     return out.sort((a, b) => a.dep - b.dep).slice(0, limit);
   }
 
-  const arrivalAt = (trip, stationId) => {
-    const s = trip.stops.find(x => x.id === stationId && !x.pass);
+  // 駅への到着時刻（from 番目より後の停車駅で探す）
+  const arrivalAt = (trip, stationId, from = -1) => {
+    const s = trip.stops.find((x, k) => k > from && x.id === stationId && !x.pass);
     return s ? at(s, 'arr', trip) : null;
   };
   const stopsAfter = (trip, i, stationId) => trip.stops.slice(i + 1).some(s => s.id === stationId && !s.pass);
 
-  return { position, departures, arrivalAt, stopsAfter, getTrips, setTrips, demoTrips };
+  return { position, departures, arrivalAt, stopsAfter, getTrips, setTrips, demoTrips, touch, getVersion };
 })();

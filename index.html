@@ -50,16 +50,17 @@
   <input type="range" id="slider" min="0" max="60" step="1" value="0" aria-label="未来の時刻">
   <div class="ticks"><span>いま</span><span>+15分</span><span>+30分</span><span>+45分</span><span>+60分</span></div>
 
-  <div class="tabs" role="tablist">
-    <button class="tab" data-plan="station">🚉 えき</button>
-    <button class="tab" data-plan="home">🏠 かえる</button>
-    <button class="tab" data-plan="work">🏭 いく</button>
-    <button class="tab" data-plan="meet">🍚 あう</button>
+  <div class="odbar">
+    <button class="locate" id="locate" aria-label="現在地から最寄り駅">📍</button>
+    <label class="od"><small>出発</small><select id="from"></select></label>
+    <button class="swap" id="swap" aria-label="出発と到着を入れかえ">⇄</button>
+    <label class="od"><small>到着・行き先</small><select id="to"></select></label>
   </div>
-  <div class="vias">
-    <button class="via-btn active" data-via="auto">✨ はやい順</button>
-    <button class="via-btn" data-via="tsurumi">鶴見経由</button>
-    <button class="via-btn" data-via="kokudo">国道経由</button>
+  <div class="near" id="near"></div>
+  <div class="presets" id="presets">
+    <button class="via-btn" data-preset="jt-asano>kq-koyasu">🏠 浅野→子安</button>
+    <button class="via-btn" data-preset="kq-koyasu>jt-asano">🏭 子安→浅野</button>
+    <button class="via-btn" data-preset="meet">🍚 待ち合わせ</button>
   </div>
   <div id="plan-mini" class="plan-mini"></div>
   <div id="plan"></div>
@@ -103,6 +104,8 @@
 <script src="js/odpt.js"></script>
 <script src="js/bus.js"></script>
 <script src="js/zoom.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/route.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -301,5 +301,23 @@ window.ODPT = (() => {
     return { updated, unmatched };
   }
 
-  return { setToken, hasToken, serviceDay, nowMin, toMin, loadKeikyuTrips, loadTsurumiTrips, applyKeikyuLive };
+  // 駅の緯度経度（最寄り駅の判定用）。取れなくても目安の値で動く。
+  async function loadStationGeo() {
+    let list = cacheGet('stationGeo.v1');
+    if (!list) {
+      const [kq, jt] = await Promise.all([
+        get('odpt:Station?odpt:railway=odpt.Railway:Keikyu.Main'),
+        get('odpt:Station?odpt:railway=odpt.Railway:JR-East.Tsurumi'),
+      ]);
+      const kqLocal = N.lines.keikyu.stations;
+      list = [
+        ...kq.map(s => [kqLocal.find(l => l.name === (s['odpt:stationTitle'] || {}).ja)?.id, s['geo:lat'], s['geo:long']]),
+        ...jt.map(s => [jtId(s['owl:sameAs']), s['geo:lat'], s['geo:long']]),
+      ].filter(x => x[0]);
+      cacheSet('stationGeo.v1', list);
+    }
+    for (const [id, lat, lon] of list) window.Geo.override(id, lat, lon);
+  }
+
+  return { setToken, hasToken, serviceDay, nowMin, toMin, loadKeikyuTrips, loadTsurumiTrips, applyKeikyuLive, loadStationGeo };
 })();

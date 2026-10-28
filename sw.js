@@ -1,7 +1,7 @@
 // アプリ本体だけキャッシュして、オフラインでも開けるようにする（ODPTの応答はキャッシュしない）
-const CACHE = 'densha-map-v3';
+const CACHE = 'densha-map-v4';
 const ASSETS = ['./', 'index.html', 'style.css', 'icon.svg', 'manifest.webmanifest',
-  'js/network.js', 'js/timetable.js', 'js/odpt.js', 'js/bus.js', 'js/zoom.js', 'js/app.js'];
+  'js/network.js', 'js/timetable.js', 'js/odpt.js', 'js/bus.js', 'js/zoom.js', 'js/geo.js', 'js/route.js', 'js/app.js'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))));
 self.addEventListener('activate', (e) => e.waitUntil(
   caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))));

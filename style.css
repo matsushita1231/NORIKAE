@@ -71,7 +71,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .grabber { display: block; width: 44px; height: 5px; border-radius: 3px; border: 0; background: var(--line); margin: 2px auto 8px; padding: 0; }
 .plan-mini { display: none; font-size: 13px; font-weight: 700; margin-top: 10px; padding: 10px 12px; border-radius: 14px; background: var(--bg); }
-.sheet.collapsed .tabs, .sheet.collapsed #plan, .sheet.collapsed .credit { display: none; }
+.sheet.collapsed .odbar, .sheet.collapsed .near, .sheet.collapsed .presets, .sheet.collapsed #plan, .sheet.collapsed .credit { display: none; }
 .sheet.collapsed .plan-mini { display: block; }
 .time-row { display: flex; align-items: center; gap: 10px; }
 .live-btn { border: 0; border-radius: 999px; padding: 6px 12px; font-weight: 800; font-size: 12px; background: var(--line); color: var(--sub); }
@@ -173,7 +173,28 @@ dialog input { display: block; width: 100%; margin-top: 6px; font-size: 16px; pa
   .map-wrap { grid-area: map; margin: 0 0 16px 16px; border-radius: 24px; overflow: hidden; box-shadow: var(--shadow); }
   .sheet { grid-area: sheet; max-height: none; margin: 0 16px 16px; border-radius: 24px; box-shadow: var(--shadow); }
   .grabber { display: none; }
-  .sheet.collapsed .tabs, .sheet.collapsed .vias { display: flex; }
+  .sheet.collapsed .odbar, .sheet.collapsed .presets { display: flex; }
+  .sheet.collapsed .near { display: block; }
+  .sheet.collapsed #plan { display: block; }
   .sheet.collapsed #plan, .sheet.collapsed .credit { display: block; }
   .sheet.collapsed .plan-mini { display: none; }
 }
+
+/* 出発→到着 */
+.odbar { display: flex; align-items: flex-end; gap: 6px; margin: 12px 0 6px; }
+.od { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.od small { font-size: 11px; font-weight: 700; color: var(--sub); padding-left: 4px; }
+.od select { width: 100%; font: inherit; font-weight: 700; font-size: 15px; padding: 8px 6px; border-radius: 12px; border: 2px solid var(--line); background: var(--card); color: var(--ink); }
+.swap, .locate { flex: none; width: 38px; height: 40px; border-radius: 12px; border: 2px solid var(--line); background: var(--card); font-size: 17px; color: var(--ink); }
+.locate.busy { animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+.near { font-size: 12px; color: var(--sub); margin: 2px 0 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.near:empty { display: none; }
+.near-btn { border: 1.5px solid var(--line); background: transparent; border-radius: 999px; padding: 3px 9px; font-size: 12px; font-weight: 700; color: var(--ink); }
+.near-btn.active { border-color: #3b82f6; color: #3b82f6; }
+.presets { display: flex; gap: 6px; margin: 0 0 10px; flex-wrap: wrap; }
+.presets .via-btn.active { border-color: var(--accent); color: var(--accent); }
+.leave { font-size: 13px; font-weight: 800; color: var(--accent); margin: 2px 0 4px; }
+.walk-row { font-size: 12px; color: var(--sub); margin: 0 2px 8px; }
+.here-pulse { animation: pulse 1.6s infinite; }
+.train .badge { pointer-events: none; }
